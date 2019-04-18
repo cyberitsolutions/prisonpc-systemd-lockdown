@@ -87,6 +87,8 @@ Plan
   * motion (camera)
   * apt mirror (or NBN?)
 
+  * start actually doing IPv6 and nftables, not just IPv4 and iptables
+
 
 
 
@@ -95,10 +97,34 @@ References
 * `lshw-omega-understudy.html`_
 * https://www.supermicro.com/products/motherboard/Xeon/C600/X9SRi-F.cfm
 * https://github.com/zfsonlinux/zfs/wiki/Debian-Buster-Root-on-ZFS
+* https://github.com/pbatard/efifs
+* https://efi.akeo.ie/downloads/efifs-1.3/x64/zfs_x64.efi
+* https://github.com/hn/debian-buster-zfs-root
+* https://raw.githubusercontent.com/hn/debian-buster-zfs-root/master/debian-buster-zfs-root.sh
 
+  I have confirmed the EFIFS 1.3 uses grub-core's zfs.c almost at HEAD.
+  This is the commit of grub that efifs is using::
 
+      51be337 2018-04-16 22:36 -0700 NVi ∙ [HEAD] templates: Update grub script template files
 
+  There are negligible differences between that and grub master::
 
+      twb@goll[grub]$ tig HEAD..master -- grub-core/fs/zfs
+      ad4bfee 2019-04-08 07:24 +0200 VSe ∙ Change fs functions to add fs_ prefix
+      ca0a4f6 2013-11-20 02:28 +0100 VSe ∙ verifiers: File type for fine-grained signature-verification controlling
+
+  There are negligible differences between that and the (earlier) 2.02 stable grub release::
+
+      twb@goll[grub]$ tig 2.02..HEAD -- grub-core/fs/zfs
+      fa42786 2017-08-03 15:46 +0100 PBa ∙ zfs: remove size_t typedef and use grub_size_t instead
+
+  2.02 is the version of grub in Debian buster.
+  There is a 2.04 release candidate at this time (Apr 2019). ::
+
+      $ tig 2.02..grub-2.04-rc1 -- grub-core/fs/zfs
+      ad4bfee 2019-04-08 07:24 +0200 VSe ∙ Change fs functions to add fs_ prefix
+      ca0a4f6 2013-11-20 02:28 +0100 VSe ∙ verifiers: File type for fine-grained signature-verification controlling
+      fa42786 2017-08-03 15:46 +0100 PBa ∙ zfs: remove size_t typedef and use grub_size_t instead
 
 
 IRC Logs
@@ -282,7 +308,6 @@ IRC Logs
     16:03 <jtara> seriously if you run out then you will just slam into a complete wall until the txg gets committed in full
     16:04 <twb> jtara: OK, although it helps to be able to estimate the number BEFORE I put in a purchasing request, let alone set up the pool :-)
     16:04 <jtara> can you even get disks that small though
-    16:05 *** hyper_ch2 JOIN
     16:05 <PMT> Sometimes.
     16:05 <PMT> The other thing is that as disks get smaller they often have lower performance because they need less flash. ;)
     16:05 <twb> So let me use some real numbers here... sustained write for a WD Red 4TB is 150MB/s.  150MB/s * 5s * 4 disks in a RAIDZ1, yields about 3000MB, or 3GB
@@ -300,3 +325,7 @@ IRC Logs
     16:07 <twb> This is for what you might call a "pet server"; the entire dataset fits into 1TB currently
     16:08 <twb> jtara: OK.  So buy the smallest SSD and let the SLOG have all of it, and it might be massively overprovisioned, but who cares
     16:15 <jtara> my customers always care about predictable latency and smooth degradation and stuff like that...so yeah
+
+
+    18:42 <twb> rlaager: in https://github.com/zfsonlinux/zfs/wiki/Debian-Buster-Root-on-ZFS §2  you use mdadm and sgdisk to wipe existing config on a disk.  You might want to also use wipefs(1), which removes everything that blkid(1) can see
+    18:49 <twb> Ugh, I was wondering why gdisk instead of libparted --- turns out the ZFS support in libparted is Ubuntu-specific
