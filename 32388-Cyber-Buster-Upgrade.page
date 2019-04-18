@@ -1,0 +1,302 @@
+GOAL: Alpha and Omega are running Debian 10 Buster.
+
+
+Checklist
+=========
+
+- **TODO** choose hardware
+
+  Omega & Omega-Understudy will remain on the good supermicro servers they're already on.
+  They will get MORE RAM.
+  They will get small SSDs to make ZFS work better.
+  They might have their HDDs replaced.
+
+  For initial experiments (the "learning server"),
+  a temporary system has been built from old parts.
+
+  Alpha & Alpha-Understudy hardware remains undecided at this time.
+  (Currently on sucky 3U whitebox servers.)
+
+- **TODO** buy more **ECC** RAM for omega & omega-undertudy
+- **TODO** buy small SSDs for omega & omega-understudy (for SLOG ZIL, and *maybe* for L2ARC)
+
+- **TODO** get Debian 10 to boot with the rootfs on ZFS
+- **TODO** get Debian 10 to boot with /boot also on ZFS (i.e. make a ZFS EFI driver).
+
+  This will let us give the *entire* disk to ZFS, and have just a simple refind-based ESP on a USB key.
+  (We won't be able to use stock refind, we'd have to have a ZFS.EFI from somewhere else.)
+
+  This is not comforting:
+  https://github.com/zfsonlinux/zfs/commit/7f35d649253c29da8852ae105980a86d8ee7ee2a
+
+
+
+Plan
+====
+* New-Alpha does networking stuff.
+
+  * firewall, DNS, ntpsec, &c
+  * nsd3 (authoritative DNS?)
+  * fail2ban again?
+
+* New-Omega does everything else.
+
+  * MORE RAM!  (ideally 64GB to 128GB)
+  * VT-d & VT-x
+  * 1 minimum-size SSD for ZIL SLOG (NVMe would be nice, but AHCI is OK)
+  * 1 minimum-size SSD for L2ARC (NVMe would be nice, but AHCI is OK)
+
+  * UEFI and refind, *NOT* BIOS/extlinux/grub
+
+  * Convert omega-understudy and alpha-understudy and cyber-offsite to
+    be based on ZFS send/recv.
+
+  * Buster, not Stretch
+
+  * Use dracut instead of initramfs-tools ???
+
+    The benefit is a "more systemdy" ramdisk.
+    The default Debian ramdisk is very old and based on buggy sh scripts.
+    The systemd model is that systemd should be IN THE RAMDISK, too.
+    The systemd model ALSO goes BACK into the ramdisk during the shutdown process.
+    This is particularly useful for systems with ZFS or btrfs rootfs.
+
+  * ZFS on Linux (ZOL) for archive/RAID
+  * Samba AD (accounts/LDAP), SMB3.2 file sharing
+  * postfix/dovecot/(mailman3?)
+  * strong apparmor/systemd lockdown, NOT containers/VMs
+  * icinga3 (replaces nagios), collectd/graphite
+
+  * alloc (mariadb+php7+apache) in a VM, because we don't trust alloc.
+    KVM, libvirtd, libvirt-daemon-driver-storage-zfs?
+
+  * rsyslog (logserv) + journald
+  * ssh/sftp gateway
+
+  * IRC (eventualy replace with matrix/riot.im)
+
+  * nginx, gitit
+
+  * fail2ban for ALL services (SSH might continue to use the in-kernel IPS as well/instead)
+  * letsencrypt for all services
+  * gitolite for /srv/vcs
+
+  * configuration management? (ansible / salt)
+  * no squid
+  * no cups (everyone has to install cups on their laptop)
+  * motion (camera)
+  * apt mirror (or NBN?)
+
+
+
+
+References
+==========
+* `lshw-omega-understudy.html`_
+* https://www.supermicro.com/products/motherboard/Xeon/C600/X9SRi-F.cfm
+* https://github.com/zfsonlinux/zfs/wiki/Debian-Buster-Root-on-ZFS
+
+
+
+
+
+
+IRC Logs
+========
+
+2019-04-17  #cyber::
+
+    <twb> ron: old Z68 mobo is now running UEFI firmware and can boot refind
+    <twb> FTR, the process was:
+    <twb> 1. download .exe from gigabyte's website (requires js)
+    <twb> 2. from windows, run the .exe, which happens to be a .7z self-extractor (so PROBABLY could use 7zip on linux)
+    <twb> 3. from that, get the FLASHEFI.EXE and FOO.U1F files
+    <twb> 4. download FREEDOS 1.2 LITE USB .zip, unzip it, get FD12LITE.IMG.
+    <twb> 5. sudo cp FD12LITE.IMG /dev/sdz
+    <twb> 6. gparted /dev/sdz, grow the FAT16 partition from ~30 MB to ~62 MB
+    <twb> 7. sudo mount /dev/sdz1 /mnt; sudo cp FLASHEFI.EXE FOO.U1F /mnt
+    <twb> 8. plug the USB key into a **USB2** port, because FreeDOS doesn't have a USB3 (XHCI) driver?
+    <twb> 9. boot freedos, choose "english" choose "fuck off"
+    <twb> 10. type "FLASHEFI FOO.U1F" to run the flashing program, wait a few minutes while it runs.
+    <twb> 11. can't exit the program, so power off, remove power cable, replace power cable, turn on, hooray, you have an UEFI firmware
+
+2019-04-18  #debian-au::
+
+    12:07 <k-man> twb: regarding zfs for rootfs, no, I didn't do that on my laptopt
+    12:07 <k-man> as it seemed too difficult at the time
+    12:08 <k-man> in fact, I don't store much, if any data on my laptop that isn't backed up elsewhere so at the moment, my laptop isn't backed up - which I guess isn't ideal
+    12:08 <twb> heh
+    12:08 <k-man> I've been thinking of re-installing buster, and trying to use zfs for rootfs
+    12:09 <k-man> there is this blackbox stript to do it. I've not tried it though: https://github.com/hn/debian-buster-zfs-root
+    12:11 <twb> k
+    12:11 <twb> I'll read that, but I'm planning to do the install via debootstrap, I think
+    12:11 <k-man> righto
+    12:11 <k-man> is this for yourself or someone else?
+    12:11 <twb> this is for my new main server at work
+    12:12 <k-man> nice
+    12:12 <k-man> is that your choice to use zfs?
+    12:13 <twb> yes
+    12:13 <twb> AFAICT btrfs has lost
+    12:13 <k-man> wow, interesting
+    12:14 <k-man> is it a race where there can only be one winner?
+    12:14 <twb> Well it seems crazy to have two good filesystems
+    12:15 <k-man> yes
+    12:15 <k-man> i think zfs had a richer featureset than btrfs - which meant that btrfs was always going to be playing catchup
+    12:17 <twb> AFAIK the main missing features in ZFS are:  1. linux-compatible license; 2. per-file nodatacow; 3. EFI driver (i.e. /boot can be inside the ZFS array)
+    12:18 <twb> All of which are annoying, but offset by a. built-in bcache equivalent (ZIL, L2ARC); b. fully automatic resilver to spare drive
+    12:19 <twb> Oh also ZFS dedup is post-facto and expensive; btrfs dedup is pre-facto and cheap, but requires you to opt into it
+    12:19 <k-man> right
+    12:19 <twb> But in both cases the end result is mostly "nobody has dedup"
+    12:19 <k-man> just about everything I read about ZFS dedup says "don't use it"
+    12:19 <k-man> yeah
+    12:19 <k-man> i really like ZVols too
+    12:20 <k-man> which BTRFS doesn't do afaict
+    12:20 <twb> btrfs doesn't need them
+    12:20 <twb> regular files work just as well
+    12:20 <k-man> isee
+    12:20 <twb> both of them suck at quotas
+    12:20 <twb> per-user quotas, I mean
+    12:21 <twb> the recommended method is "make a separate zfs for each /home/foo and set a quota on that zfs"
+    12:22 <twb> -o com.sun:auto-snapshot=false  I'd have never found that one
+    12:24 <twb> That script weirdly makes / and /var separate filesystems
+    12:24 <twb> And it's written in bash, but only sh is available in the place he claims to be running it
+    12:59 <k-man> twb: he mentioned in the readme that /var had to be seperate for some reason
+    12:59 <k-man> something to do with the timing of mounting the zfs fs
+    12:59 <k-man>  /var has to be mounted from /etc/fstab rather than the ZFS way
+    13:00 <twb> k-man: his readme seems to be explainin why he had a workaround to support a separate /var, but not why he wants /var separate in the first place
+    13:00 <k-man> oh ok
+    13:00 <k-man> doesn't debian do that if you choose the "everything in seperate partitions" option?
+    13:01 <twb> dunno, maybe
+    13:01 <twb> having a separate /var is stupid IMO
+    13:01 <twb> The reason that's A Thing is because originally / and /usr were read-only and shared between 100 computers
+    13:01 <twb> and /var was the per-computer part
+    13:01 <k-man> twb: ok. I'm not arguing- just speculating that that was his reasoning
+    13:01 <k-man> ah ok
+    13:02 <twb> But having /usr separate isn't even supported anymore; it was about 60% broken and then systemd forced that to be 100% broken and officially abandoned
+    13:02 <k-man> ah
+
+2019-04-18 #zfsonlinux::
+
+    12:56 <twb> I've babysat a couple of Debian + ZOL hosts before, but I'm setting up my own for the first time.  I also want the rootfs to be on ZOL.  As well as the notes in /topic, my main reference is https://raw.githubusercontent.com/hn/debian-buster-zfs-root/master/debian-buster-zfs-root.sh  (from https://github.com/hn/debian-buster-zfs-root).
+    12:57 <twb> I notice that's adding *partitions* to the pool, instead of whole disks.  Isn't that a Bad Thing?
+    12:57 <rlaager> No, it's fine. I fought the good fight for wholedisk, but it's just not the right fit here.
+    12:57 <twb> Because you need an ESP still?
+    12:58 <twb> And a /boot, I guess
+    13:00 <rlaager> twb: Right, and now we're doing two pools: bpool for /boot and rpool for /
+    13:00 <twb> rlaager: who is "we" ?
+    13:03 <twb> Is there a ZFS EFI driver yet?  When using BTRFS, my preferred way to handle this is to have whole-disk elements in the pool, and then have a completely static refind ESP on an internal USB key.  Since refind has a btrfs EFI driver, /boot can just be part of the normal btrfs pool.
+    13:04 <twb> There's still a SPOF for that USB key, but it's read-only and not device-specific, so it's trivial to replace
+    13:06 <twb> I think refind's btrfs EFI driver was stolen from grub2, and I see there's a /usr/lib/grub/x86_64-efi/zfs.mod... not sure how to turn that into an .efi...
+
+    FIXME I had a link from somebody to a ZFS EFI driver from the "efifs" project, but firefox crashed by laptop and I lost it.
+
+
+    13:01 <gurg> btw rlaager, is this your tutorial since it mentions you?
+    13:01 <gurg> https://github.com/zfsonlinux/zfs/wiki/Ubuntu-18.04-Root-on-ZFS
+    13:02 <gurg> Because I was wondering if I should open an issue for the hints for step 2.3 "creating the boot pool" because the hint command there for if doing a raidz says rpool instead of bpool
+    13:10 <rlaager> gurg: Typo fixed. Thanks!
+
+
+    14:50 <twb> Hey, did you know your https://github.com/zfsonlinux/zfs.wiki.git has fsck errors
+    14:50 <twb> You can't clone it unless you turn off transfer.fsckobjects=true in git
+    14:51 <twb> It's almost entirely linear so you might get away with actually fixing it, instead of just having to live with it
+
+
+    15:26 <twb> The ZOL wiki links to some introductory blog posts https://pthree.org/2012/12/07/zfs-administration-part-iv-the-adjustable-replacement-cache/
+    15:26 <zfs-bot> [ Aaron Toponce : ZFS Administration, Part IV- The Adjustable Replacement Cache ] - pthree.org
+    15:26 <twb> That says ZIL >1GB isn't really useful.  Is that still true?
+    15:27 <twb> And if so, is it silly to get two separate ~100GB SSDs, one for ZIL and one for L2ARC?
+    15:28 <twb> I did that last time, but maybe that was just because partitioning disks is lame
+    15:29 <jtara> twb it all comes down to your workload
+    15:29 <jtara> a SLOG (separate ZIL) is almost always a good idea for a pool that will see significant sync writes, even if it's no faster than the other disks
+    15:29 <jtara> l2arc can help, sometimes, sort of...but imo it really is more for salvaging an awful situation than anything else
+    15:29 <jtara> memory is better when you don't have to fake it ;)
+    15:30 <PMT> yeah but at the time it was built you weren't usually cost-limited for arbitrary amounts of memory, but HW limited because you couldn't stick more in =P
+    15:32 <twb> aren't SSDs cheaper than "buy more RAM" still?
+    15:32 <jtara> the times i've seen gains with it align are when metadata is badly fragmented from data and you are suffering from it
+    15:32 <jtara> yeah but l2arc helps quite a bit less than just more arc
+    15:32 <twb> k
+    15:33 <jtara> if you have a trashed pool (logbias=throughput, primarycache=metadata to try to cut down on random read iops) then yeah l2arc can help make an awful situation better
+    15:33 <jtara> but so much better to just not get into that in the first place
+    15:34 <twb> Looks like for comparable capacity, RAM costs is about four times SSDs cost
+    15:35 <twb> oops, I can't math
+    15:36 <twb> it's more like 32 times
+    15:37 <jtara> imo get a pool going well, look at your arc hit rates, then decide if its worth it
+    15:37 <twb> That's fair
+    15:38 <jtara> i did zfs consulting for database setups for many years, l2arc really was only beneficial a small amount of the time
+    15:38 <twb> because (assuming you kept an AHCI slot free) you can always add the l2arc in <1h downtime
+    15:38 <PMT> twb: cheaper isn't what I meant, I meant "no money short of a custom Cray thing would buy you more"
+    15:39 <jtara> if l2arc makes or breaks your setup, ime something is very weird.  it can help, but it won't rock your world.
+    15:39 <twb> PMT: IIUC you're saying that when l2arc was invented, you simply couldn't put more ram in the server.  Now, you can (although it's still a bit more expensive than SSDs)
+    15:40 <jtara> if you can't fit enough ram, try to drive up your average recordsize if you can
+    15:40 <jtara> that will decrease metadata overhead and help
+    15:41 <jtara> old trick from the sun days anyway
+    15:41 <twb> I did have one server that was struggling for some reason, and one of the things I did was add ZIL SLOG and L2ARC on NVME SSDs, and the problem went away.  So I guess I (falsely) internalized that adding SSDs for SLOG and L2ARC is a cheap and easy thing you should ALWAYS do.
+    15:42 <PMT> twb: you still have limits, but yes, you could put in much less RAM at almost any cost.
+    15:42 <twb> PMT: understood
+    15:42 <jtara> the big thing a slog will do that surprises most people, is to decouple rmw reads and compression from the point of time of write
+    15:42 <jtara> without one, big sync writes get rmw and compression inline
+    15:42 <jtara> which can really be a dramatic dofference
+    15:42 <twb> rmw?
+    15:43 <jtara> read modify write.  like if you write 32k of a 128k record and the rest needs to get read to merge it
+    15:43 <twb> I think I understand that
+    15:44 <jtara> basically deferring rmw is good because eventually you may get all the pieces and can avoid the read
+    15:44 <PMT> twb: ZFS ~never overwrites things in place. So if you modify some or all of a block, the entire new block gets written separately somewhere else, then it may mark the old one as not needed any more. But since that means reading the old one, modifying the contents, and writing it out separately, you call it [...]
+    15:44 <twb> I did something like that once to linearize / cohere write spam to RRD files
+    15:45 <jtara> anyway, learn and love zpool iostat, especially -r
+    15:45 <jtara> it tells you a lot about what's really happening
+    15:46 <PMT> sometimes it tells lies.
+    15:46 <PMT> Not often, but sometimes.
+    15:47 <jtara> it helps to turn off aggregation and to cross reference with blktrace, i do admit
+    15:48 <jtara> but for a "wtf is going on with this pool" peek it's hard to beat
+    15:49 <twb> I've used it before.  And sar / iostat on pre-ZFS systems
+    15:51 <twb> jtara: does having compression "in the loop" like you were talking about, does that matter if it's a realtime compression algorithm like LZ4 / LZO?
+    15:52 <jtara> it does, because usually sync write concerns are driven by latency
+    15:53 <jtara> so even a pretty fast compression alg can have significant latency impact
+    15:53 <twb> Hrm, OK.
+    15:53 <jtara> but usually a bigger concern are rmw reads
+    15:53 <jtara> when you make a write wait for a read, it's bad
+    15:54 <jtara> i almost always recommend deferring them to txg commit time when you can
+    15:54 <jtara> which means either a slog or a very high zfs_immediate_write_sz
+    15:55 <twb> So is this a reasonable rule-of-thumb?  1) a SLOG ZIL is always useful; 2) an L2ARC is only really useful when you can't get more ARC and/or your system is badly configured
+    15:55 <jtara> thats my opinion anyway, there are others out there
+    15:56 <jtara> but that's the classic solaris zfs approach and it works well
+    15:58 <twb> Is it true that a SLOG ZIL >1GB is a waste of time?
+    15:59 <PMT> twb: the rule of thumb is generally X seconds of sync IO for the main pool
+    15:59 <jtara> a slog stores sync writes (and all writes in their sync domains) between txg commits
+    15:59 <PMT> usually X is 5
+    15:59 <jtara> usually you don't need a lot
+    15:59 <twb> PMT: so like if I do zpool iostat and I see 100MB of writes per second, my SLOG should be around 5*100MB = 500MB?
+    16:00 <PMT> twb: if that's how long you make txg sync length, yeah. You might adjust that for other reasons. But generally it's X seconds of maximum for the pool, not maximum you've seen.
+    16:00 <jtara> there's overhead for every write and for every 128k or so block
+    16:01 <PMT> Padding it is fairly minimally risky. Undersizing it makes it more useless than you might want.
+    16:01 <jtara> just oversize it 10x what you think you'll ever need and don't worry
+    16:01 <PMT> If you can do that, sure.
+    16:01 <twb> PMT: OK so it would be more like 5 seconds times the sustained write speed of all the HDDs in the pool?
+    16:02 <twb> In my immediate case it's easy for me to give it 10GB or 100GB instead of 1GB, I'm just trying to understand where the numbers come from
+    16:02 <PMT> twb: generally? if it were raidz vdevs I'd probably suggest something like X seconds times the total throughput of data disks per pool, but the overprovisioning suggestion means you probably shouldn't bother caring about the difference.
+    16:02 <twb> OK cool
+    16:02 <PMT> twb: your goal is for it to be able to take all the sync IO from a txg without needing to wait on the disks to catch up.
+    16:02 <jtara> if you really want to precision size it, take zfs_dirty_data_max and double it
+    16:03 <jtara> that should be worst case
+    16:03 <jtara> seriously if you run out then you will just slam into a complete wall until the txg gets committed in full
+    16:04 <twb> jtara: OK, although it helps to be able to estimate the number BEFORE I put in a purchasing request, let alone set up the pool :-)
+    16:04 <jtara> can you even get disks that small though
+    16:05 *** hyper_ch2 JOIN
+    16:05 <PMT> Sometimes.
+    16:05 <PMT> The other thing is that as disks get smaller they often have lower performance because they need less flash. ;)
+    16:05 <twb> So let me use some real numbers here... sustained write for a WD Red 4TB is 150MB/s.  150MB/s * 5s * 4 disks in a RAIDZ1, yields about 3000MB, or 3GB
+    16:05 <jtara> ok, say you're writing compressible data, like text
+    16:06 <PMT> Are you sure the drives only do 150 MB/s, max?
+    16:06 <twb> So if the smallest SSD I can buy anyway is 100GB, I can give 10GB to the SLOG and 90GB to L2ARC just because it's lying around anyway
+    16:06 <twb> PMT: https://www.wd.com/content/dam/wdc/website/downloadable_assets/eng/spec_data_sheet/2879-800002.pdf
+    16:06 <jtara> so for your raidz to handle 3000mb, your slog might have to handle 9000mb
+    16:06 <PMT> twb: caveat, data in the L2ARC takes up space in the ARC. So it's not just a free set of more RAM.
+    16:06 <jtara> or even
+    16:06 <jtara> over 9000.
+    16:06 <PMT> twb: heh, 4TB.
+    16:07 <jtara> try to resist the temptation to do something else with a slog device
+    16:07 <jtara> but, people do
+    16:07 <twb> This is for what you might call a "pet server"; the entire dataset fits into 1TB currently
+    16:08 <twb> jtara: OK.  So buy the smallest SSD and let the SLOG have all of it, and it might be massively overprovisioned, but who cares
+    16:15 <jtara> my customers always care about predictable latency and smooth degradation and stuff like that...so yeah
