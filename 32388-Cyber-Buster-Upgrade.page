@@ -175,6 +175,22 @@ How do we boot ZFS?
 
   This ensures both /boot and the full ESP disk get ZFS snapshotted and ZFS send-ed to the usual backup places.
 
+  * UPDATE::
+
+        15:41 <rlaager> twb: You might be able to save some steps with this approach:
+                1) Always keep your FAT32-formatted zvol mounted at /boot. Mount it with "sync" for extra safety, especially in light of...
+                2) rsync the zvol to /dev/disk/by-id/TOSHIBA-xxxx "Whenever flashrom would run"
+        15:42 <twb> ah so copy it in the other direction, basically
+        15:42 <rlaager> Exactly. Then it should be "safe" to keep it mounted all the time, which
+                        is what I assume you were trying to avoid with the flash drive, which causes the dual re-mount steps.
+        15:43 <twb> That would do (slightly) more writes to the USB key, but probably fine.
+        15:43 <rlaager> Would it write more?
+        15:44 <twb> depends if the rsync blocks line up with the FAT and/or erase blocks, I guess
+
+        15:43 <twb> It would also hose any writes by the bootloader or mainboard (or other OSs) to the USB key...
+        15:44 <rlaager> But yes, it would overwrite any changes from elsewhere. That is a downside.
+
+
   * Why not just put /boot on the normal pool and use grub zfs.mod driver?
     Because then we wouldn't be able to use sexy new ZFS features until GRUB gets support for them, and
     grub isn't updated very often.
@@ -1025,6 +1041,9 @@ IRC Logs
     19:45 <twb> OnCalendar=Sun *-*-8..14 00:24:00
     19:48 <twb> looks good to me
     19:48 <twb> "NEXT: Sun 2019-05-12 00:24:00 AEST  LEFT: 2 weeks 4 days left "
+
+    19:54 <twb> Wow.  I discovered arc_summary, and looking at a prod ZFS pool, I can see L1ARC "Actual Hit Ratio" is 82%, where L2ARC "Hit Ratio" is only 5%
+    19:54 <twb> Meaning (I think) that the L2ARC really isn't helping much
 
 2019-04-23 ##eros-chat::
 
