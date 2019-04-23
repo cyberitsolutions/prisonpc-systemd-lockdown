@@ -55,7 +55,7 @@ Plan
 
   * Use dracut instead of initramfs-tools ???
 
-    The benefit is a "more systemdy" ramdisk.
+    The benefit is a "more systemd-y" ramdisk.
     The default Debian ramdisk is very old and based on buggy sh scripts.
     The systemd model is that systemd should be IN THE RAMDISK, too.
     The systemd model ALSO goes BACK into the ramdisk during the shutdown process.
@@ -89,6 +89,123 @@ Plan
 
   * start actually doing IPv6 and nftables, not just IPv4 and iptables
 
+
+How do we boot ZFS?
+-------------------
+
+* ZFS wants to be given whole disks, not partitions.
+  On Linux, benefits are
+
+  1) ZFS will auto-set the disk's I/O scheduler; and
+  2) ZFS will auto-partition replacement disks.
+
+  UPDATE: <rlaager> twb: #1 is not applicable. The initramfs will set noop on the disks in the root pool.
+
+* UEFI (or BIOS) support for /boot on ZFS exist, but do not support all ZFS features.
+  Therefore, *either*
+
+  1) the main ZFS pool is limited to a crap feature set; or
+  2) /boot lives somewhere else (not the main ZFS pool)
+
+  UPDATE::
+
+    15:34 <rlaager> I think "crap feature set" is a bit harsh. That was _the_ feature set not that long ago.
+    15:35 <twb> I haven't looked at exactly what the featureset is
+
+  UPDATE: here is the featureset that zfs_x64.efi from efifs 1.3 (= grub-2.02-143-g51be3372e) supports::
+
+      /*
+       * List of pool features that the grub implementation of ZFS supports for
+       * read. Note that features that are only required for write do not need
+       * to be listed here since grub opens pools in read-only mode.
+       */
+      #define MAX_SUPPORTED_FEATURE_STRLEN 50
+      static const char *spa_feature_names[] = {
+        "org.illumos:lz4_compress",
+        "com.delphix:hole_birth",
+        "com.delphix:embedded_data",
+        "com.delphix:extensible_dataset",
+        "org.open-zfs:large_blocks",
+        NULL
+      };
+
+  Comparing that to what rlaager is doing in the HOWTO, the zfs create
+  args aren't directly diffable, because in the bpool they're using
+  "-d" to turn off most things, then "-o" to turn some things back on.
+
+  rlaager worked it out for me::
+
+    15:53 <rlaager> twb: multi_vdev_crash_dump (which is never used anyway), large_dnode, sha512, skein, and edonr.
+    15:53 <rlaager> twb: Oops, sorry, that was bionic, not buster.
+    15:56 <rlaager> twb: Buster is the same as Bionic.
+                    0.8.0 adds encryption, device_removal, obsolete_counts (part of device_removal, essentially), and bookmark_v2 (part of encryption, essentially)
+
+    15:52 <rlaager> There's also a reasonable debate to be had here about whether we should enable features "just because we can" or whether we should only able features that "matter" on the bpool.
+    15:53 <twb> I actually use ext2 for /boot quite often because YAGNI even for the journal and extents :-)
+
+
+* UEFI ESP is a small (~4MB) FAT32 partition, that must exist *somewhere*.
+  It can't reliably be mirrored, so Cyber Best Current Practice is to make it a completely generic refind.img USB key, mounted inside the case.
+  Yes, it's a SPOF, but it's a *read-only* device, and if it breaks, it's a simple matter to "cp refind.img /dev/sdz" to make a new USB key.
+
+  Refind doesn't have a ZFS.EFI driver, but it can use grub2's zfs.mod, recompiled for EFI by the efifs project.
+  https://efi.akeo.ie/downloads/efifs-1.3/x64/zfs_x64.efi
+
+  rlaager's design would then work like this:
+
+  * ESP (w/ ZFS driver) →
+  * bpool (small, feature-limited ZFS pool just for /boot) kernel + ramdisk →
+  * rpool (large, full-feature ZFS pool for everything else) rootfs et al.
+
+* Instead of rlaager's design, we propose to store a copy of /boot on the ESP itself.
+
+  Whenever flashrom would run (on initramfs compile / kernel install?)::
+
+      mount -o remount,rw /boot/efi
+      rsync --exclude=efi /boot/ /boot/efi/debian/
+      mount -o remount,ro /boot/efi
+
+  Also, to preserve the old model of "just dd this image to a new USB
+  key", take a backup of the entire USB key *back* to a zvol inside
+  the main pool, e.g. ::
+
+      # The --inplace is to avoid COWs on NOP blocks;
+      # I think there is a new ZFS feature that can automatically skip NOP writes?
+      rsync --inplace /dev/disk/by-id/TOSHIBA-XXXX  /dev/disk/by-uuid/XXXX
+
+  This ensures both /boot and the full ESP disk get ZFS snapshotted and ZFS send-ed to the usual backup places.
+
+  * Why not just put /boot on the normal pool and use grub zfs.mod driver?
+    Because then we wouldn't be able to use sexy new ZFS features until GRUB gets support for them, and
+    grub isn't updated very often.
+    (Currently I'm just *assuming* those features are important enough to be worthwhile.)
+
+  * Why not just use rlaager's bpool and rpool?
+    Because then we'd have to handle disk partitioning ourselves and I/O scheduling, instead of letting ZFS manage it.
+    Because we hate grub (and update-grub and os-prober) and like refind, and getting the ZFS driver from grub into refind (via efifs project) is an extra hassle.
+
+  * Why not just netboot?
+    Because then we can't boot until the PXE server is running.
+    Because we also want to use this design *on* the PXE server itself.
+
+  * Why not just mount the ESP as /boot?
+    Because then the ONLY copy of /boot is on the USB key, which is a SPOF.
+
+  * Why not use BIOS instead of UEFI?
+    Because the grub ZFS driver is just as limited on BIOS as on UEFI, i.e. it wouldn't help.
+    Because we would also still need somewhere to store the stage0 and stage1, i.e. a disk whose partitioning is managed outside of ZFS.
+
+  * Why not mirror the ESP so it's redundant?
+    Because it's more failure-prone than just reflashing the SPOF USB key.
+
+    At a minimum, we'd need to use md metadata=0.9 (so the md metadata lives at the END of the partition), and
+    we'd need to make the FAT filesystem slightly smaller than the partition its on
+    (so that if/when e.g. refind or the mainboard UEFI firmware writes to the FAT, it will never overwrite the md metadata).
+    And even once that's done, the GPT partition tables would not be md mirrored, so if they ever changed, they'd need to be manually kept in sync.
+
+    Possibly we could work around that by md mirroring the entire USB
+    keys, with metadata=1.2, so that the disk layout would be
+    "[GPT1][md metadata][FAT][blank][GPT2]".  But UGH.
 
 
 
@@ -329,3 +446,487 @@ IRC Logs
 
     18:42 <twb> rlaager: in https://github.com/zfsonlinux/zfs/wiki/Debian-Buster-Root-on-ZFS §2  you use mdadm and sgdisk to wipe existing config on a disk.  You might want to also use wipefs(1), which removes everything that blkid(1) can see
     18:49 <twb> Ugh, I was wondering why gdisk instead of libparted --- turns out the ZFS support in libparted is Ubuntu-specific
+
+
+2019-04-23 #zfsonlinux::
+
+    12:31 /join #zfsonlinux
+    12:34 <twb> rlaager: re zfs.wiki/Debian-Buster-Root-on-ZFS.md, you said last week that you wanted to give ZFS the whole disk(s), but had to give up in that HOWTO (because grub zfs is feature-limited, and because ESP).
+    12:35 <twb> $coworker has a different idea and I want to know how much you (all) hate it
+    12:35 <twb> 1. ESP is stock refind on a USB key inside the chassis, because refind Just Works, and then it's a completely static ESP that's easy to replace
+    12:35 <twb> 2. except that refind has the same problem as grub, so instead of making /boot separate, leave it on the ZFS, but have an apt post-install hook that copies /boot onto the ESP
+    12:36 <twb> If the ESP drive goes tits-up, you need to boot a live system to recover, instead of just making another stock refind USB key, but that's not TOO hard, and it means you can continue to give full disks (instead of partitions) to ZFS.  Which is/was a Super Nice Thing
+    12:39 <PMT> twb: i mean, that assumes the existence of an internal USB key, which is a bit of a specialized way to solve this
+    12:39 <twb> Granted
+    12:39 <twb> That's our (work's) standard way to work around EFI having no concept of mirrored ESP
+    12:40 <twb> You make the ESP the same across all systems, so it's more like a network card than a software configuration, and if it breaks you just install a new one
+    12:41 <twb> grub zfs.mod limitations won't let me make it EXACTLY the same (at least, if the pool is going to use newer features), so #2 is my workaround for that
+    12:42 <PMT> I mean, at that point, why not just netboot refind?
+    12:43 <twb> I guess mainly because that makes it dependent on the PXE server already being up.  Also one of the targets for this design *is* the netboot server
+    12:44 <PMT> So you have multiple netboot servers and they boot from each other. :V
+    12:44 <twb> heh, fair
+    12:46 <PMT> pts0: i mean, everything you've never done before is complex, so
+    12:46 <twb> Looking at the issue from the other end: Solaris ZFS used to *really* want whole disks, not partitions (AFAIK).  Is that (disks not partitions) something ZOL still cares about?
+    12:49 <PMT> twb: Solaris wanted whole disks to play with the write cache settings. ZoL wants whole disks to set the whole disk's IO scheduler to noop or equivalent. If you can't use the whole disk, you could still script doing that.
+    12:49 <twb> Ah OK
+    12:49 <PMT> (if it's not a whole disk you also need to go fiddle with the partition tables to expand a device, I believe, but vOv)
+    12:49 <jasonwc> DeHackEd, Cisco already listed the Optane DIMMS for sale.  $2000 for 128GB and $21k for 512GB.  --> https://www.storagereview.com/cisco_details_intel_optane_dc_persistent_memory_pricing
+    12:49 <zfs-bot> [ Cisco Details Intel Optane DC Persistent Memory Pricing | StorageReview.com - Storage Reviews ] - www.storagereview.com
+    12:50 <PMT> lmfao
+    12:50 <PMT> quite the goddamn dimm
+    12:50 <twb> Does ZFS care if the partitions were created with parted --align=optimal (or whatever the gdisk equivalent is)?
+    12:51 <PMT> ZFS doesn't, but the drives do. :D
+    12:51 <twb> k
+    12:51 <jasonwc> they have a review of a Supermicro server with those persistent DIMMs.  "Our first test is the 4K random read test here the persistent memory started at 1,371,386 IOPS at 4.6μs and went on to peak at 13,169,761 IOPS at a latency of only 12.1μs. "
+    12:51 <pts0> PMT so it sounds like mdadm with mbr partitions booting to bios boot mode is the way to given all that twb is going through
+    12:51 <PMT> That's mostly a joke - using non-physical block size aligned partitions is an invitation to pain and suffering.
+    12:51 <PMT> pts0: what?
+    12:52 <twb> PMT: yeah understood, I just half-expected you to say "ZFS is so smart it'll automatically fix that for you if you screw up"
+    12:52 <pts0> so just ext4 a root and then a boot partition and do a bios as opposed to a uefi boot
+    12:52 <PMT> pts0: ...how did you get there from any of this discussion.
+    12:52 <pts0> zfs on boot with uefi is crazy complex
+    12:52 <twb> PMT: I think they're thinking of a md raid1 ext /boot, and the UEFI->BIOS thing is just a conflation
+    12:52 <pts0> what i said is much simpler
+    12:53 <pts0> no forget uefi
+    12:53 <PMT> twb: i know, i'm just unsure why they think this is helpful.
+    12:53 <pts0> it won't even see the stuff right without a bunch of fanagling
+    12:53 <jasonwc> pts0, What's so complex about it? It's documenteed by rlaager
+    12:53 <twb> pts0: are you suggesting that the non-UEFI (BIOS) ZFS drivers in grub are *better* than the UEFI ZFS drivers in grub?
+    12:53 <pts0> no i'm saying no zfs for the boot and root
+    12:53 <pts0> and just do a bios boot
+    12:54 <PMT> pts0: you appear to be advocating a solution to a problem nobody else thinks is a problem.
+    12:54 <jasonwc> You can do BIOS boot with separate boot and root pools
+    12:54 <jasonwc> You can also do a BIOS boot with a single root pool if you don't need features Grub doesn't support
+    12:54 <pts0> seems to complex to me from everything i've looked at
+    12:54 <pts0> 100 damn steps
+    12:54 <jasonwc> It's just thoroughly documented.  It's not a hard process.
+    12:54 <twb> I don't want pre-UEFI BIOS, and I want / on ZFS.  Having /boot on ZFS is "nice to have" but not critical..
+    12:55 <rlaager> pts0: You're free to do whatever you want on your systems, of course, but this works fine and is well documented. It's also the way forward if this ever gets distro integration, which is being considered.
+    12:55 <pts0> Can someone give me a link to the documentation
+    12:55 <pts0> maybe i saw the wrong thing
+    12:55 <twb> pts0: zfs.wiki/Debian-Buster-Root-on-ZFS.md
+    12:55 <jasonwc> pts0, What distribution are you planning to use?
+    12:55 <twb> pts0: so uh... https://github.com/zfsonlinux/zfs/wiki/Debian-Buster-Root-on-ZFS
+    12:55 <pts0> ubuntu
+    12:56 <twb> pts0: there is a similar page for Ubuntu LTS on that wiki
+    12:56 <jasonwc> pts0, https://github.com/zfsonlinux/zfs/wiki/Ubuntu-18.04-Root-on-ZFS
+    12:56 <pts0> yeah...that's the one i saw
+    12:56 <pts0> it's above my brain capacity
+    12:56 <pts0> ugh
+    12:56 <jasonwc> pts0, For one thing, it documents both an encrypted and non-encrypted setup
+    12:56 <jasonwc> For another, it includes every step, so you just need to follow the instructions once.
+    12:56 <twb> pts0: most of it is standard, e.g. the ESP stuff is the same as if Ubuntu's debian-installer script was doing it.
+    12:57 <rlaager> twb: If you put /boot into the ESP, then yes, your alternative proposal works fine, and ZFS can have whole disks for the rpool.
+    12:57 <pts0> I just can't understand it
+    12:57 <jasonwc> pts0, What don't you understand?
+    12:57 <pts0> I wonder if they were to put it in sections--maybe taking out the encrypted part,etc.
+    12:57 <twb> rlaager: OK, thanks.  I was mainly hoping for a response of "oh, interesting idea" or "don't do that, because <reason>!"  :-)
+    12:57 <pts0> put the encrypted part in another link
+    12:57 <pts0> i dunno
+    12:58 <pts0> Then it's just not explained well
+    12:58 <pts0> run sgdisk with crazy switches
+    12:58 <pts0> well i've never run sgdisk before
+    12:58 <pts0> i've used fdisk
+    12:58 <rlaager> twb: This also works if you have separate disks generally. My tentative plan for my personal server is to replace everything with the following: 1) A mirrored pair of SSDs. They will be partitioned for BBP (because this is BIOS only hardware but could be ESP), bpool, and a "special" (allocation classes) partition for the rpool. 2) The spinning disks will be a raidz3 with wholedisk.
+    12:58 <pts0> and another one so I dont' even know what it's doing
+    12:58 <twb> pts0: fdisk -> gdisk is just MBR -> GPT
+    12:58 <jasonwc> pts0, I mean, you can manually partition with fdisk
+    12:59 <rlaager> twb: The main reason to NOT do it in a server environment is the lack of mirroring, which you've acknowledged.
+    12:59 <pts0> all day long
+    12:59 <pts0> but what's with all the switches
+    12:59 <jasonwc> pts0, In fact, I"ve done it.  You can also use the commands provided and it will work.
+    12:59 <pts0> then they don't talk about how to get the disk uuids or any explanation for the sizing and zfs switches
+    12:59 <pts0> just do all this craziness
+    12:59 <twb> rlaager: OK, I understood all that except for the special allocation classes thing
+    12:59 <pts0> ok, my main disk dies
+    12:59 <pts0> then what
+    13:00 <pts0> i have to go into the bios and repoint it to another disk or something
+    13:00 <rlaager> pts0: If you have concrete suggestions, I'm open to adding more explanations. It does make it longer, but people seem to like the explanations generally, as they can skip them if they don't care.
+    13:00 <pts0> the format arch uses always helps me
+    13:00 <pts0> i don't know why
+    13:00 <jasonwc> I suppose it would be nice if there were expandable sections so you could just follow the one you wnated
+    13:00 <pts0> yeah
+    13:00 <pts0> yes
+    13:00 <rlaager> twb: It's a new in 0.8.0 feature that puts the metadata on separate devices, in this case, SSDs. So the hope is I'd get a useful mix of capacity from raidz3 and metadata performance from SSDs.
+    13:00 <twb> rlaager: ah, OK.  I have seen a similar thing in btrfs, I think
+    13:01 <jasonwc> but not sure if the Wiki even supports that
+    13:01 <rlaager> I'm not sure either. Maybe I could look at readthedocs.io or whatever the kids are using these days.
+    13:01 <pts0> rlaager for starters make two separate links for encrypted vs non-encryped
+    13:01 <pts0> to clear up the cluttered appearance...but other than that...truth is i dont' know what the hell im doing so
+    13:01 <pts0> this is going to be a tough one
+    13:02 <jasonwc> pts0, Try following the instructions in a VM.  I bet you'll find it is easier than you think.
+    13:02 <jasonwc> pts0, and if you break the VM, no big deal
+    13:02 <rlaager> Another option would be to have the .md output from some script. Then it could write out BIOS vs UEFI; encrypted vs. not, etc. And we wouldn't care how many different outputs there were, because it's automated. Then just have the users click some links to get the right version.
+    13:02 <rlaager> But another way to do this is to write this into the OS installer, which is hopefully happening.
+    13:02 <pts0> so what happens if my main disk dies
+    13:02 <pts0> do i have to go into the bios
+    13:03 <rlaager> pts0: "Hints: ... ls -la /dev/disk/by-id will list the aliases."
+    13:03 <jasonwc> pts0, You can install Grub to all disks. Presumably, your BIOS allows you to sort boot order, so it should just boot from the second listed disk
+    13:03 <twb> One of my hats is documentation manager / tech writer, and I can definite vouch for reST/sphinx/readthedocs stack over markdown.  The expanding/collapsing block thing would either be part of the CSS/js theme, or an extension.
+    13:04 <pts0> ok, updates are ALWAYS changing grub crap
+    13:04 <pts0> is an update going to break it
+    13:04 <twb> (sphinx is what linux kernel and python communities use these days)
+    13:04 <rlaager> pts0: As a general tip... I suggest following the instructions once, exactly as written. Once you see how things work and have a working system to poke at, it will make a lot more sense.
+    13:04 <pts0> ****do you want to overwrite custom grub with package maintaners...that one
+    13:04 <rlaager> It's fine. Obviously say "no" to that prompt.
+    13:05 <pts0> then i miss something the package maintainer wanted
+    13:05 <rlaager> But to be fair, you do need to have some idea what you're doing, and be willing to take some risk. This is not the common-case scenario, as it's not a distro default. It's not distro supported. etc. etc.
+    13:05 <pts0> i always hate that one
+    13:05 <pts0> sgdisk     -n2:1M:+512M   -t2:EF00 /dev/disk/by-id/scsi-SATA_disk1
+    13:05 <pts0> so what are all the switches
+    13:06 <twb> pts0: per the manpage, it creates a new partition, number 2, from 1M to 1+512MB, on the disk with serial number "SATA_disk1"
+    13:06 <twb> pts0: oh and sets its GPT UUID (i.e. "partition type") to "EF00", which is presumably the magic number for the ESP
+    13:06 <pts0> ok so thats not the uuids i see when i run blkid
+    13:07 *** ChanServ MODE +v mahrens
+    13:07 <twb> pts0: again per the gdisk manpage, the 4-digit UUID is a shorthand for the "real" UUID
+    13:07 <pts0> yeah see i have no idea what the hell that means
+    13:08 <jasonwc> pts0, I think you're overthinking this.  Try it in a VM to get a feel for how things work.  If you have a decent understanding of ZFS, you should be fine.
+    13:08 <twb> pts0: that's OK.  The HOWTOs on the ZOL wiki assume you already have some experience with these tools.
+    13:08 <pts0> I'll go throught it and make a bunch of notes when I have time and try to install it so you guys know what an idiot thinks about so if you want to idiot proof it you can
+    13:09 <twb> pts0: you just need some practice, I think.  As jasonwc says, you can do this with a toy VM to avoid risking your "real" setups
+    13:10 <pts0> Honestly the complexity just makes me want to use the hardware raid...then you have people saying it's perfectly fine
+    13:11 <pts0> anyway, i appreciate all the help
+    13:11 <PMT> I mean, if you dislike things you don't understand, you're free to do whatever you want.
+    13:12 <pts0> why do you say that
+    13:12 <pts0> i know that
+    13:12 <pts0> i'm not trying to be a jerk or anything
+    13:13 <pts0> I'm tempted to learn this but I haven't been feeling well lately
+    13:13 <twb> hardware raid is a huge pain, because you have to buy a spare rescue card in case the main card dies (because different models aren't compatible); you can't SMART to the drives to find out when they're dying; you have to run proprietary software in a RHEL chroot to manage the array, &c &c
+    13:13 <jasonwc> pts0, I found it overwhelming at first too, but I wouldn't go back to using anything but ZFS for my root fs.  It's saved me so many times when something broke and I was able to fix it with a quick rollback, live, without restoring from backups
+    13:14 <pts0> twb but you'd have to buy a spare hba too right
+    13:14 <pts0> the thing that scares me is zfs just dying due to hardware raid
+    13:14 <pts0> some people really stress that
+    13:14 <PMT> that...doesn't make sense.
+    13:15 <twb> pts0: if you're doing RAIDZ, then you're using passthrough HBAs
+    13:15 <twb> pts0: which are 1. cheap; and 2. fungible.
+    13:15 <twb> pts0: I know that if I put the disks into *any* computer with enough SAS slots, I can recover the data.
+    13:16 <PMT> If you hide the multiple disks from ZFS, then yes, it can't recover from corruption, because it doesn't have any sort of redundancy even if there's a HW raid under it, but that's not really a ZFS-ism, it's just a fact.
+    13:16 <twb> (When I was talking about buying a "rescue card" for hardware raid, "card" = "HBA")
+    13:16 <pts0> check out my posts on reddit to see what I was looking at:https://www.reddit.com/user/5tzr/posts/
+    13:16 <zfs-bot> [REDDITOR] 5tzr | Link: 6 | Comment: 35
+    13:16 <zfs-bot> [ 5tzr (u/5tzr) - Reddit ] - www.reddit.com
+    13:16 <PMT> no
+    13:17 <pts0> PMT you're free to do whatever you want.
+    13:18 <jasonwc> pts0, I think the first post from fengshui is on point
+    13:18 <jasonwc> https://www.reddit.com/r/zfs/comments/bg4t3w/any_thoughtsopinionscorrections_on_this_article/
+    13:18 <zfs-bot> [REDDIT] Any thoughts/opinions/corrections on this article? (https://mangolassi.it/topic/12047/zfs-is-perfectly-safe-on-hardware-raid/9) to r/zfs | 0 points (33.0%) | 4 comments | Posted by 5tzr | Created at 2019-04-22 - 17:27:15UTC
+    13:18 <zfs-bot> [ Any thoughts/opinions/corrections on this article? : zfs ] - www.reddit.com
+    13:20 <pts0> I'm not sure if I should trust that Perc card even in passthrough mode
+    13:21 <pts0> maybe I should get another card?
+    13:21 <pts0> One guy said you could flash the full perc but not the mini
+    13:21 <pts0> I have the mini
+    13:21 <jasonwc> Ah
+    13:21 <jasonwc> I mean, you can get a 9211-8i pre-flashed with IT mode for $50 on Ebay
+    13:21 <jasonwc> I've got 6 of them and they work great
+    13:22 <pts0> That's what you would recommend for a Dell R720?
+    13:22 <pts0> Do you have a link?
+    13:22 <twb> perc 5 HBA can't do passthrough IIRC
+    13:22 <twb> It can only do single-disk RAID0s, and you lost all your SMART
+    13:23 <pts0> perc h310 mini
+    13:23 <pts0> that's the model I have
+    13:23 <twb> Last time I was on a server that came with a RAID HBA, I just paid $20 to replace it with a passthrough HBA
+    13:24 <pts0> What HBA would you recommend for a R720?
+    13:24 <twb> pts0: whatever the first-party one is
+    13:24 <pts0> I don't know what that is
+    13:24 <jasonwc> pts0, I mean, there are a ton of them on Ebay.  Here's one from a seller I've actually purchased from in the past that I trust
+    13:24 <jasonwc> pts0, https://www.ebay.com/itm/LSI-SAS-9211-8i-8-port-6Gb-s-Internal-IT-MODE-ZFS-JBOD-HBA-IR-MODE-RAID/352612690487?hash=item52195aaa37:m:mbEDowx1AV5jIlfu6fiaMHg
+    13:24 <zfs-bot> [ LSI SAS 9211-8i 8-port 6Gb/s Internal (IT-MODE) ZFS JBOD HBA / (IR-MODE) RAID | eBay ] - www.ebay.com
+    13:24 <twb> pts0: so call your dell salesdroid and ask
+    13:25 <pts0> I don't know what you mean by first party
+    13:25 <twb> jasonwc: what's "IT mode" mean, there?
+    13:25 <twb> pts0: "first-party" means Dell sells it to you and guarantees it'll work in their server
+    13:25 <jasonwc> pts0, Each SAS port will give you 4x 6 Gbit bandwidth, so it'll give you full bandwidth for 8 drives, but if you're using HDDs and have a backplane with a SAS expander, you can use a single HBA for 24 or more drives
+    13:25 <jasonwc> twb, IT mode means it's just a pure HBA, no RAID features, just pass-through
+    13:25 <jasonwc> twb, full SMART access etc.
+    13:25 <twb> jasonwc: ah cool
+    13:26 <twb> jasonwc: that's not a shibboleth I knew, but I'll remember it for next time
+    13:26 <jasonwc> twb, These LSI cards are sold under a bunch of names, and you can flash different firmware.  IR is RAID IIRC, IT is what you want for ZFS
+    13:26 <pts0> and this will work with the Dell disk case?
+    13:26 <jasonwc> twb, The 9211-8i are pervasive but there are newer and faster variants with SAS 12 Gb support
+    13:27 <jasonwc> pts0, Dell disk case?
+    13:27 <jasonwc> You mean Dell Chasis?
+    13:27 <jasonwc> I think a lot of people use 9211-8i's from various manufacturers with the IT firmware.  Unless Dell is doing something to block non-Dell hardware, I don't see why it wouldn't work.
+    13:28 <pts0> Hell I don't know
+    13:28 <jasonwc> You can ask on Reddit.  Lots of people use these cards.
+    13:28 <pts0> I thought you had to cable something to it
+    13:28 <jasonwc> They're just dumb HBAs
+    13:28 <jasonwc> yeah, you cable it to the backplane
+    13:28 <pts0> the backplane where all the disks plug into?
+    13:28 <jasonwc> with a direct attach backplane, you'll have one SAS port for every 4 drive bays
+    13:28 <jasonwc> With a SAS expander, you may have one or two ports for all drives
+    13:29 <jasonwc> pts0, Yes, drives attach to the backplane, and then on the back of the backplane there will be SAS ports that go to the HBA
+    13:29 <jasonwc> pts0, How many drives are you going to be using?
+    13:30 <pts0> well i was thinking 8, 2 mirrored for the boot/root stuff
+    13:30 <pts0> but is that not what the guide says to do?
+    13:31 <jasonwc> pts0, This what you have? https://www.youtube.com/watch?v=a5toVeaLqRA
+    13:31 <zfs-bot> [ PowerEdge R720: Hard Drive Backplane - YouTube ] - www.youtube.com
+    13:31 <pts0> i think that's the xd with a bunch of drives
+    13:31 <pts0> mine just has 8
+    13:31 <pts0> R720xd vs R720
+    13:32 <pts0> I just have the R720
+    13:32 /dim pts0
+    13:32 *** DIM pts0 Ashenzari Henzell Sizzell Sequell Lantell Rotatell Eksell Cheibriados Gretell Kramell BTS zfs-bot nalpre EMIYA ladybird ldybrd ladybug ladybot ladyblurb mrscribe travis-ci Brainstorm Not-ba84 lubotu2 kenaan Svadilfari bbot2 feepbot curlbot zfs firebot pg_docbot pg_docbot crosbot zwiebelbot sd-bot sd-bot0 sd-bot1 sd-bot2 sd-bot3 sd-bot4 sd-bot5 sd-bot6 sd-bot7 32NAAB16X CIA- CIA-0 CIA-1 CIA-2 CIA-3 ChanServ Energon lpaste FBI GumbyPAN Jesdisciple KGB KGB-0 KGB-1 KGB-2 KGB-3 MentorSeeker birny checkbot cyber darcscommitbot darcswikibot dpkg dselect evalbot evil_twin factorbot fajita friendlyToaster fsbot fsbot` fsbot`` infobob ghcbot gitbot gitinfo GitHub157 GitHub106 greybot hgbot hpaste iwakura judd knoba lambdabot lamebot lisppaste lopbot pasteban perlbot pursuivant rudybot rudybot_ samba-bot sarahbot shadowpaste shbot shebang specbot tpg trungl-bot twiggz ubottu ubotu ubot2 ubot93 upstartbot uvirtbot uvirtbot~ uvirtbot` vpnHelper wikibugs IZBot Selvvir Not-63f6 logerritbot loircbot Nugs Not-c51b wrt Anaphaxeton Apic Buglouse average theos edgar-rft ManateeLazyCat MrSassyPants Roxyhart0 TheEvilPhoenix ^law^ a7a ams bazhang coldhead consolers coolack djszapi djszapi_ eagles0513875 eagles051387_ eagles0513875|2 eagles0513875| fix jaimef akkad joeoshawa jordanb jordanb_ kaushal notbrien tanasinn wolferz yates BlueOcean blass rockxloose rockxloose_ p0a rob_debian jeromelanteri epony RaycatRakittra Aethaeryn kenzo kenzo215 njsg Muimi Muimi1 iqubic Juesto bazhang Megabyte Shinigami-Sama sam_yan biffhero reisio Branes Calinou Captain_Crow CcSsNET John[Lisbeth] dorothyw johnnymacs Cheiron nunag rotorua tokeroa Devastator Error404NotFound Grum str1ngs LimCore Mgamerz WorstHumanEver Pikkachu RoyK RoyK^ antono atomx aurelien buu clint clint- cloneMX cluelessperson cluelessphone dominicdinada mpourhadi mpourhadi_ drake1 aeth fxiny haylo haylo_ heviarti heviarti_ icepick caffe j4jackj dvorakbot lich linocisco maroloccio maroloccio2 omeddragon pizzasauce rgr robottinosino ruben32 seanjohn silentwhisper xk05 |xk05| xk051 xorred thunk
+    13:32 <pts0> So you think that card will work?
+    13:33 <pts0> I can buy a more expensive one if it's better
+    13:33 <jasonwc> you're right about the mini card
+    13:33 <jasonwc> "If you're using a mini card don't attempt flash it as you'll brick the card instead configure the disks as non raid to pass them through. The mini card looks like this."
+    13:33 <jasonwc> https://www.serverhome.nl/media/catalog/product/cache/1/image/9df78eab33525d08d6e5fb8d27136e95/p/e/perc-h310-mini-mono.jpg
+    13:33 <pts0> this midget porn collection is very important to me
+    13:33 <pts0> bad joke
+    13:34 <jasonwc> " If you're using a non mini card, I'd suggest you flash it to a pure HBA using 9211-8i firmware."
+    13:34 <jasonwc> Apparently the non-mini card is just a 9211-8i
+    13:34 <pts0> yes i have the mini
+    13:34 <jasonwc> So I don't see why buying one online wouldn't work
+    13:34 <pts0> someone told me exactly what you just posted
+    13:34 <jasonwc> if it makes you feel better, you can get the dell one
+    13:35 <jasonwc> https://www.ebay.com/itm/LSI-9211-8i-P20-IT-Mode-for-ZFS-FreeNAS-unRAID-Dell-H310-6Gbps-SAS-HBA/253955813684?epid=19006955695&hash=item3b20f23134:g:kKkAAOSwMjpb11RL
+    13:35 <zfs-bot> [ LSI 9211-8i P20 IT Mode for ZFS FreeNAS unRAID Dell H310 6Gbps SAS HBA | eBay ] - www.ebay.com
+    13:35 <jasonwc> So this is just a Dell H310 flashed with the IT firmware
+    13:35 <jasonwc> given that the firmware is the same, it's silly to pay more for it
+    13:35 <jasonwc> You're better off to asking on Reddit if anyone had problems using a 9211-8i that was not sourced from Dell.  I suspect it'll work just fine.
+    13:36 <pts0> I wonder if I do Dell firmware updates if it will brick it
+    13:36 <jasonwc> What firmware updates would you need to do?
+    13:36 <pts0> Dell has that automated firmware updates through the lifecycle controller, etc
+    13:36 <jasonwc> Other than update the BIOS on my motherboard
+    13:36 <pts0> and with an iso
+    13:37 <pts0> oh it updates disk firmware too
+    13:37 <jasonwc> Wouldn't that assume the disks came from Dell?
+    13:37 <pts0> yeah good point
+    13:37 <pts0> hell im going to try it
+    13:37 <pts0> screw it
+    13:37 <jasonwc> I've had good experience with UnixSurplus
+    13:38 <jasonwc> They are based in CA and I've bought a few servers from them
+    13:40 <pts0> Does that guide create a separate pool/mirror for the boot/root stuff or is it all one big raid6 or something
+    13:41 <jasonwc> pts0, The guide can be modified to do whatever you want.  I personally use a mirror of SSDs for my root pool.  Mirrors provide better IOPS and are more efficient than raidz2 for storing small blocks (8 and 16K).  With raidz/2/3, you get the random IOPS of a single disk, but sequential reads and writes scale with the # of disks - 1/2/3 disks based on your parity selection.  Mirrors will give you the write IOPS of a single
+    13:41 <jasonwc> disk and the read IOPS of the # of disks in the mirror.
+    13:42 <jasonwc> pts0, Are you using just SSDs or will this system also have HDDs?
+    13:44 <pts0> It will just have HDDs
+    13:44 <pts0> Man I just can't understand what that guide is doing
+    13:44 <pts0> I want my boot/root disks to be mirrored
+    13:44 <jasonwc> I don't think you want a single raidz2 in that case.  You'll get the IOPS of a single disk and that's not great.
+    13:45 <pts0> It seems like that woudl be the default
+    13:45 <jasonwc> pts0, The guide can be used to create a mirror, raidz/2/3, or a singleton
+    13:45 <pts0> but how
+    13:45 <pts0> you have to boot off one disk
+    13:45 <pts0> and if that one dies, you have to boot of the other
+    13:45 <pts0> unless you just don't want to boot
+    13:46 <jasonwc> pts0, so, the guide shows how to create a pool using a single disk
+    13:47 <pts0> ok so then what
+    13:47 <jasonwc> pts0, To simplify, zpool create -o options rpool mirror Disk1 Disk2
+    13:47 <pts0> that disk dies and I'm screwed
+    13:48 <jasonwc> pts0, for raidz, zpool create -o options rpool raidz Disk1 Disk2 Disk3
+    13:48 <jasonwc> pts0, The guide actually covers this: "If you are creating a mirror or raidz topology, create the pool using zpool create ... rpool mirror /dev/disk/by-id/scsi-SATA_disk1-part4 /dev/disk/by-id/scsi-SATA_disk2-part4 (or replace mirror with raidz, raidz2, or raidz3 and list the partitions from additional disks). "
+    13:48 <pts0> I would bet good money it wouldn't jsut boot off that second drive then
+    13:48 <jasonwc> pts0, The guide assumes some knowledge of ZFS
+    13:49 <pts0> if i pulled the first out
+    13:49 <jasonwc> pts0, It would if you install Grub to both drives, which the guide instructs you to do
+    13:49 <jasonwc> pts0, I've pulled a drive and it boots
+    13:50 <pts0> So it starts the partitions off at an offset or something so you can put grub on it
+    13:56 !!! irc.freenode.net: connection broken by remote peer (closed)
+    13:56 !!! irc.freenode.net: connection broken by remote peer (closed)
+    > The other advantage of all first-party hardware is that 14:01 /join
+      #zfsonlinux
+    14:01 *** TOPIC ZFS on Linux - http://zfsonlinux.org/ - Latest release: 0.7.13 (beta 0.8.0-rc4) - FAQ: https://github.com/zfsonlinux/zfs/wiki/faq - LiveCD: http://list.zfsonlinux.org/zfs-iso/ - Offtopic (non-computer stuff) should use #zfsonlinux-social - Paste using nopaste - Native encryption is not production ready, see #6224 (rlaager!~rlaager@grape.coderich.net on Thu Apr 18 11:29:11 2019)
+    14:01 *** NAMES @ChanServ +mahrens +ryao _KaszpiR_ aarwine adisbladis aegiap agris aither Albori alexxy AllanJude amir amospalla andjjj23 AndrewG AndyCap apekatten APTX_ apus asjackson b636bc7ca bart- Baughn bdha beardface beowuff betawaffle bglod_ blassin Blub\0 bobe bol breitenj brethil bs338 BtbN buu c3-Win c3r1c3-Lin captain42 CarlGel catalase cbmuser Ceryn cirdan clete2 clever cliluw CoJaBo Comnenus CompanionCube copec cpt-oblivious Crocodillian ctrlbreak_MAD cyberbootje cyphase cyteen Dagger dave_uy debfx deepy DeHackEd delx devster Dewin DHE djdunn djs_ donhw Dragnslcr dsockwell dustinm DzAirmaX eab echelog-3 echeveria edef eightyeight Ekho elvishjerricco endre` ephemer0l_ ericnoan erska esotericnonsense euank ezbp f_g feliks FinalX FireSnake fishfox__ fling fs2 Fubarovic Fusl fwaggle gardar gbkersey gchristensen geaaru ghfields ghormoon ghoti gila GrayShade green-- guardian Gugge gurg gurki gyakovlev haasn Harekiet heinrich5991 hexa- hmw hondza HotSwap hsp hyper_ch Hypfer ih8wndz iklio INeedAHandle infecticide infernix IonTau irdr_ iTeV ius izibi JanC jasonrm jasonwc javi404 jidar jkux jmcgnh JMoVS JPT jtara JulietDeltaGolf JWU42 k-man kahiru kalasmannen kegwin kerberizer kimmyk King_InuYasha kini kittysh Klox krupke L0j1k Lalufu lblume leah2 LeoTh3o leper` libsci likewhoa logan- Logos01 lord4163 lpsmith lundman lurkless lynchc m3thos madwizard maestronolte manfromafar marble_visions MarisaKi1 mavhq mf migy__ MilkmanDan mishiranu misuto mlatin mmlb MooingLemur morphin mquin mybalzitch mz` nahamu_ neffi nicoulaj noone nwf oblikoamorale optiz0r p_l pcd percY- perfinion phantomcircuit phibs Phil-Work Phil21 pink_mist piti Pjerky pmooney PMT poots pR0Ps prawn prologic prometheanfire ps-auxw pts0 puxavida radkos raoulb ReimuHakurei rich0 riddle rj1 rlaager rnydam robinsmidsrod Ryushin sarnold sauravg scar scastano Selavi ShaRose Shinigami-Sama siruf Sketch skomorokh_ snehring soltys sphalerite sphrak sponix Stern stiell stochastix stoiko storrgie str4nd STRML SuperSeriousCat sztanpet Tashtari tds teardown TheJollyRoger theracermaster tilpner timeless timewalker TimWolla tlacatlc6 tmiw trisk troyt tsp tuxmontero twb uebera|| ulope user1234567 user_51 varesa veegee_ veremitz vertigo voldial vrakfall__ wak-work Walex waz0wski whyz woffs wolfire wolke xedniv Xeha xlued xmw XpineX xqsl yangm97 yawkat yoink yomisei Yukikaze z1mme zapotah zfs-bot Zgrokl zoredache |woody|
+    14:01 *** services. 328 #zfsonlinux http://zfsonlinux.org
+    14:01 <pts0> sgdisk     -n2:1M:+512M    ok from 1M to 512m but then this just overwrites it sgdisk     -n3:0:+512M
+    14:02 <pts0> the third one overwrites the second one
+    14:02 <pts0> and it overwrites the first one because it starts at 0
+    14:03 <pts0> there's just nothing in the gude about it...ah well
+    14:04 <pts0> maybe i'll be smarter in the future...anyhow thanks everyone
+    14:04 <pts0> take care
+    14:04 <jasonwc> no, the third is +512M...
+    14:04 <jasonwc> so it doesn't overwrite it
+    14:04 <jasonwc> first is 24K-1M, second 1M-512M, third starts at 512M
+    14:04 <jasonwc> pts0, I would recommend using ZFS for your data pool to get familiar with it, and you can revisit using ZFS for a boot pool when you feel more comfortable
+    14:07 <jtara> i'd agree
+    14:07 <pts0> unfortunately i don't think i can
+    14:07 <pts0> i can either enable hardware raid or not
+    14:07 <jtara> it's best used on a small scale first if you're still learning it
+    14:07 <pts0> why are there three ts
+    14:07 <pts0> t1, t2, t3
+    14:08 <jasonwc> pts0, You can use two disks for a mdadm mirror for your boot, and give the remaining disks to ZFS for a raidz/2 pool
+    14:08 <pts0> n1, n2 and n3 are partitions but the ts are types right
+    14:08 <jasonwc> pts0, mdadm should be very simple
+    14:08 <pts0> lol
+    14:08 <pts0> yeah i looked at that guide too
+    14:08 <pts0> there is a script that supposedly makes it simple
+    14:08 <jasonwc> pts0, And if you're not booting off of ZFS, you don't have to worry about kernel compatibility.
+    14:09 <pts0> i think, truth is, you just have to understand all this to do a non-standard install
+    14:09 <jasonwc> You can setup a RAID1 mirror using mdadm with either the Debian or Ubuntu installer
+    14:09 <pts0> ok, yeah, i'll try that
+    14:09 <pts0> last question though why are there three ts
+    14:09 <pts0> t1, t2, t3
+    14:09 <jasonwc> so, use 2 disks for your / with mdadm and LVM
+    14:09 <pts0> if it's just a partition type
+    14:09 <jasonwc> it'll do that for you
+    14:10 <jasonwc> then I would probably do a raidz2 with the 6 disks unless you need IOPS in which case you can do 3 mirrors striped
+    14:10 <pts0> truth is im' just learning
+    14:10 <pts0> jsut a cheap box to play with
+    14:10 <pts0> seriously though what are the three ts
+    14:11 <pts0> in the guide in that partitioning section
+    14:11 <pts0> t1, t2 and t3...n1, n2 and n3 are the partition numbers
+    14:11 <jtara> if you're just learning, leave hw raid off, maybe even plan on two separate pools
+    14:11 <jtara> so you can back up everything to one if you need to blow away the other, or something
+    14:11 <jtara> plus some things are best appreciated with a couple different pools
+    14:12 <jtara> personally i would only do sw raid for a boot drive, but that's probably more of a solaris perspective than linux
+    14:12 <jasonwc> jtara, Why? mdadm should be well tested.  Raid5/6 has the write hole but RAID10 should be fine.
+    14:14 <jtara> i'd rather have a sw raid setup because i don't trust boot disks sitting behind proprietary controllers, for the most part
+    14:14 <jtara> and i feel that sw raid gives better indications of predictive failure for root mirroring
+    14:14 <jasonwc> Yeah, I meant why would you trust a hardware RAID controller over a hardware RAID solution for RADI10?
+    14:14 <jtara> plus zfs makes it really easy on solaris to do
+    14:14 <jasonwc> "personally I would only do sw raid for a boot drive"
+    14:14 <jtara> i didn't say i would, i don't think
+    14:15 <jasonwc> Or do you just mean you would use ZFS for anything else?
+    14:15 <jtara> i would use sw raid either with a mirror on a zpool or with something non-zfs i guess
+    14:15 <jtara> back in the bad old days of sunos we used something very mdadm-ish that worked reasonably
+    14:15 <pts0> -n3:0:+512M
+    14:16 <pts0> does that mean to start where the last partition ended
+    14:16 <jtara> oh i think i understand the misunderstanding
+    14:16 <jtara> i mean, "for a boot drive, i would only use sw raid, not hw raid"
+    14:16 <jasonwc> ah, got it
+    14:16 <jtara> english is such a stupid language lol
+    14:16 <jasonwc> pts0, Yeah, it starts at +512M
+    14:16 <jtara> doesn't even have proper lambdas
+    14:17 <jasonwc> Yeah, I interpreted it as I would only use SW raid for this one situation, and hardware RAID in all others.
+    14:17 <jtara> ahh
+    14:17 <pts0> i thought it meant to start where the last one ended and go 512M more
+    14:18 <pts0> i'll play and see what it does
+    14:18 <pts0> thanks guys for putting up with me
+    14:18 <jasonwc> pts0, Since you seem uncomfortable with sgdisk, you can also achieve the same results with fdisk, which is definitely easier to use
+    14:18 <jasonwc> pts0, But for a howto, it's better to use instructions that minimize the opportunity for error
+    14:19 <jasonwc> You don't need to become an expert on sgdisk to use ZFS.
+    14:19 <jtara> just don't be in a hurry to put mission critical stuff that requires all kind of stuff on it
+    14:19 <jtara> play with it, destroy some pools, create some more, get a feel for it
+    14:19 <jasonwc> yeah, I created several VM root pools before I did one on my real system
+    14:19 <pts0> i see what the ns and ts match up now
+    14:20 <jasonwc> And I had used ZFS for a non-root pool for a few years before using ZFS on root
+    14:20 <pts0> it's specifying the partition number in both
+    14:20 <pts0> so t4 to change the type of partition 4
+    14:20 <jtara> we still don't use zfs for root here, but i'm trying to get it widely adopted for containers
+    14:20 <pts0> i have nothing important to screw up so
+    14:20 <pts0> meh
+    14:20 <jtara> considering how many pools i'm jamming into a single physical it works pretty well
+    14:20 <twb> Strictly, sgdisk is GPT sfdisk.  gdisk is the GPT fdisk.  The "s" is the non-interactive version, IIRC.
+    14:21 <twb> I personally prefer libparted over g/fdisk, but the feature sets aren't identical.
+    14:21 <jtara> pts0: that's an awesome place to be in!
+    14:21 <pts0> well i'm also sickly, ugly and old so
+    14:22 <jasonwc> jtara, Why have so many pools on a single disk?
+    14:22 <jtara> our original use case had one pool per local container, as well as one "backup" pool for each container on remote block storage
+    14:23 <jtara> going forward we may have multiple containers per pool but this has been the cleanest way to give them isolation so far
+    14:23 <pts0> twb so sgdisk is fdisk
+    14:24 <jtara> it lets each container either manage its own pool or delegates that to a backup pod
+    14:24 <twb> fdisk and sfdisk are MBR; gdisk and sgdisk are GPT.  GPT is required for UEFI.  GPT is required for ≥4TiB disks.
+    14:25 <jtara> plus it's mostly ssd so we're not nearly so iop constrained as long as each pool io plays nice
+    14:26 <pts0> sfdisk is not fdisk?
+    14:26 <jasonwc> On an unrelated topic, what's the best way for a consumer to obtain enterprise SSDs?
+    14:27 <fling> Does not zfs support badblocks?
+    14:27 <jasonwc> I only see them offered by 3rd party sellers that are surely not authorized retailers.  Do you have to buy in bulk?
+    14:28 <pts0> the ones with s in front of them are for non-interactive?
+    14:30 /join #7z
+    14:30 /join #7zip
+    14:48 <PMT> fling: I don't believe there's any mechanism, no
+    14:50 <twb> jasonwc: what do you mean by "enterprise" SSDs?
+    14:50 <twb> Different FTL?
+    14:50 <fling> enterprise bytes!
+    14:51 <jtara> different duty cycles, more overprovisioning, often pre burned in
+    14:51 <twb> Fair enough
+    14:51 <fling> jtara: what is pre burned?
+    14:52 <twb> I didn't know they were A Thing, presumably because I'm not enterprisey enough to even get them offered to me :-)
+    14:52 <jtara> normally ssd performance degrades over time as blocks fill
+    14:53 <jtara> burning them in basically gets you to steady state performance instead of facing a steeply falling curve
+    14:53 <jtara> in a lot of places consistent performance is more important than brief maximum performance basically
+    14:53 <jtara> and big overprovisioning really diminishes erase cost
+    14:55 <jtara> the other thing is...if you can run with big blocks on zfs and not raidz them, you make really sequential writes
+    14:55 <jtara> so you can greatly minimize ssd erase cost
+    14:56 <PMT> I mean, I imagine you could probably implement a badblocks equivalent assuming the region isn't in use, by permanently leaking it. :V
+    14:57 <twb> Is badblocks even A Thing still?  Doesn't the HDD firmware have the equivalent internally, and when that runs out, you should throw the disk away
+    14:57 <PMT> twb: in theory.
+    15:32 <twb> http://ix.io/1GWp/rst  are my notes about my plan for booting w/ ZFS
+    15:34 <rlaager> twb: #1 is not applicable. The initramfs will set noop on the disks in the root pool.
+    15:34 <rlaager> I think "crap feature set" is a bit harsh. That was _the_ feature set not that long ago.
+    15:34 <twb> OK :-)
+    15:35 <twb> I haven't looked at exactly what the featureset is
+    15:35 <rlaager> If you're going to use a bpool, what's the point in using refind instead of GRUB? Because you can't mirror the ESP? What type of motherboards are you using?
+    15:36 <rlaager> Oh, nevermind, I misread.
+    15:41 <rlaager> twb: You might be able to save some steps with this approach: 1) Always keep your FAT32-formatted zvol mounted at /boot. Mount it with "sync" for extra safety, especially in light of... 2) rsync the zvol to /dev/disk/by-id/TOSHIBA-xxxx "Whenever flashrom would run"
+    15:42 <twb> ah so copy it in the other direction, basically
+    15:42 <rlaager> Exactly. Then it should be "safe" to keep it mounted all the time, which is what I assume you were trying to avoid with the flash drive, which causes the dual re-mount steps.
+    15:43 <twb> That would do (slightly) more writes to the USB key, but probably fine.  It would also hose any writes by the bootloader or mainboard (or other OSs) to the USB key...
+    15:43 <rlaager> Would it write more?
+    15:44 <rlaager> But yes, it would overwrite any changes from elsewhere. That is a downside.
+    15:44 <twb> depends if the rsync blocks line up with the FAT and/or erase blocks, I guess
+    15:46 <rlaager> I'm still not sure why you can't have multiple ESPs.
+    15:46 <twb> You can have multiple disconnected ESPs, but you can't have them all be mirrored together without fighting the UEFI standard (AFAICT)
+    15:47 <twb> If you have multiple ESPs, then things that aren't Linux that write to them will write to *one* of them, maybe the wrong one
+    15:47 <rlaager> Correct. Do your systems actually write to them?
+    15:47 <twb> I don't know :-)
+    15:47 <twb> UEFI conformant devices are allowed to
+    15:48 <twb> and IIUC refind supports it as an alternative to writing to the efi boot vars, because they're on a PROM with a very limited number of writes, and it's soldered onto the mainboard
+    15:48 <rlaager> Also, to answer your question about NOP writes... if you set the checksum to one of the cryptographically secure choices, then ZFS will avoid writing blocks to disk that are the same as the existing blocks. That's the nop-write thing. That's pretty small potatoes here, though.
+    15:49 <twb> Looking at your HOWTO, I must be reading it wrong, because it looks like you're turning on most features on the bpool, not the rpool?  e.g. feature@async_destroy=enabled
+    15:49 <rlaager> I'm reasonably confident that my Supermicro boards do not have any features that write to the EFI partition and do not care about EFI variables. They're basically doing the "scan the disks" approach from BIOS booting, but with EFI. So for a setup like that, dd'ing them is pretty safe. Your systems may vary.
+    15:50 <rlaager> You have different goals than me, so you have reached a different result. I think your approach is sound and well-thought-out.
+    15:50 <rlaager> twb: The bpool has features disabled with -d, then individual features turned back on. The rpool takes the default, which is all features enabled.
+    15:50 <twb> Ah, so *that's* what the -d does
+    15:51 <twb> So let's see what features are actually different between bpool and rpool on a buster system...
+    15:51 <rlaager> The bpool enables those features which GRUB supports, _plus_ all "read-only compatible" features, because GRUB is only reading the pool. That may change if we can get GRUB to write to the pool, even in a limited way, for the grubenv file.
+    15:51 <lundman> Didn't I see a commit recently that finally lets us feature=disabled too
+    15:52 <rlaager> There's also a reasonable debate to be had here about whether we should enable features "just because we can" or whether we should only able features that "matter" on the bpool.
+    15:52 <rlaager> lundman: I think that exists, but I'm not 100% sure. I could use that, but this approach is safer if someone backports a newer ZFS or something.
+    15:53 <rlaager> twb: multi_vdev_crash_dump (which is never used anyway), large_dnode, sha512, skein, and edonr.
+    15:53 <lundman> yeps - just fresh in my mind as I cherry-picked it over last week
+    15:53 <twb> I actually use ext2 for /boot quite often because YAGNI even for the journal and extents :-)
+    15:53 <rlaager> twb: Oops, sorry, that was bionic, not buster.
+    15:56 <twb> SHA-2 sounds important given that SHA-1 is orange since 2004 http://valaurora.org/hash.html  (damn, that link is dead today...)
+    15:56 <rlaager> twb: Buster is the same as Bionic. 0.8.0 adds encryption, device_removal, obsolete_counts (part of device_removal, essentially), and bookmark_v2 (part of encryption, essentially)
+    15:57 <rlaager> Neither is sha1. The sha512 feature is to allow you to use checksum=sha512 (which is SHA512/256) rather than checksum=sha256. But the default is checksum=fletcher4 anyway.
+    15:57 <twb> Ah cool
+    15:58 <twb> Is 0.8 likely to be "ready" in the next six months?
+    15:58 <twb> at-rest FDE (without the LUKS hassle) is a "nice to have" for me
+    15:58 <rlaager> From a practical standpoint, assuming you don't need device_removal, the main feature difference is large_dnode and/or encryption, with the latter being the killer difference.
+    15:59 <rlaager> Yes, 0.8.0 will probably be released soon.
+    15:59 <twb> Will it be possible to in-place upgrade from no encryption to encryption?
+    15:59 <twb> Like turn it on and then resilver the pool?
+    15:59 <FireSnake> turn it on for new data
+    16:00 <FireSnake> for new datasets
+    16:00 <FireSnake> not for existing
+    16:00 <rlaager> Yes, in the sense that you can enable it on your pool on new _datasets_. But if you have sensitive data in the pool already, you may not want to do that, as that would leave sensitive data on the disk. You might want to wipe the disks.
+    16:00 <twb> That makes sense
+    16:01 <rlaager> Were you looking at Debian then?
+    16:01 <twb> So even if I had e.g. /var/mail and made a new encrypted zfs and copied all the files from old-var-mail zfs to new-var-mail zfs, it wouldn't do any kinda secure erase of the old-var-mail disk blocks
+    16:02 <twb> So remanence would still screw me unless I manually nwipe'd the drives or similar
+    16:02 <rlaager> twb: You might want to compile the 0.8.0rc4 package from git. Here's the not-secret-but-not-linked-from-anywhere experimental HOWTO for that: https://github.com/zfsonlinux/zfs/wiki/Debian-Buster-Encrypted-Root-on-ZFS
+    16:02 <twb> rlaager: oh!  I saw that page but my brain assumed it was the LUKS method still.
+    16:04 <twb> Another dumb question: if I zfs send from a system without ZFS encryption, to a system *with* ZFS encryption, will the receiving host have FDE on the received snapshots?
+    16:05 <rlaager> That depends on the properties inherited and such. It should be straightforward to achieve that result. Unless you need to receive the root dataset; that might be an issue. I haven't tested this, though.
+    16:05 <twb> Right now my historical infrastructure looks like:   prod server → rsync → ZFS archive server → rsync → offsite DR server with FDE
+    16:06 <twb> And my plan is to have end up with prod server w/ ZFS snaps → zfs send → offsite DR server with FDE
+    16:06 <jtara> that can work well, zfs send/receive can work much better for some workloads
+    16:06 <jtara> but for some its not that important
+    16:07 <rlaager> twb: Right, so if I were you, I'd probably start by replacing the offsite DR server with ZFS encryption. That would result in: prod server → rsync → ZFS archive server → zfs send → offsite DR server with FDE
+    16:07 <rlaager> That's a minimal change. Assuming that works, then convert to the end game.
+    16:08 <twb> that's fair, although right now the budget prefers me to upgrade the prod server first
+    16:09 <rlaager> I proposed a software change. Unless you're talking about labor budgets, there's no spending involved. ;)
+    16:09 <twb> as long as the offsite host will have FDE, I don't *really* care
+    16:09 <twb> rlaager: well, I gotta have enough capacity to have the old and new setups running side-by-side briefly, or be confident enough to do it in-place
+    16:10 <rlaager> Sure, there's nothing wrong with doing it the other direction.
+    16:10 <jtara> do you want to apply the incrementals on the remote end
+    16:10 <jtara> or just store periodic full and incremental sends
+    16:10 <jtara> both work, just different approaches
+    16:11 <twb> The end goal is to have all the archive snapshots on the offsite host.  Right now, the offsite host only has the latest state
+    16:11 <rlaager> If bandwidth is limited, it may actually be better to start with the prod server. This could avoid the need to send two full copies during the migration process.
+    16:11 <twb> Right now the bandwidth is about 1Mbit/s, but hopefully that'll go to about 10Mbit/s in a couple of months
+    16:12 <twb> But for initial syncs I can just give someone a USB HDD
+    16:12 <rlaager> Yeah, do the prod server first. Get your zfs send | recv worked out on site, between prod and ZFS archive server. Once that's golden, then it's just a matter of converting the DR server to ZFS and doing one big send | recv.
+    16:12 <twb> The offsite host is only DR ("the building burns down") anyway, so it's not a major concern
+    16:13 <rlaager> For your initial sync, you can do send | recv to a pool on a USB drive, then have someone drive it to the DR server, then send | recv from USB to the DR pool. Thereafter, just do incrementals.
+    16:14 <twb> yeah or even just zfs send >/mnt/usb-hdd/zfs-send.img
+    16:14 <rlaager> Sure, that works too.
+    16:21 <twb> What does device_removal get me?  If a disk is dying, I want to replace it while the system is running.
+    16:29 <twb> FTR, https://valerieaurora.org/hash.html  was the URL I was trying for earlier.
+    16:29 <zfs-bot> [ Lifetimes of cryptographic hash functions ] - valerieaurora.org
+    16:34 <rlaager> device_removal allows you to remove a top-level vdev, subject to some limitations. For example, if you accidentally `zpool add` instead of `zpool attach`. Or if you want to reduce something from N striped mirrors to N-1.
+    16:36 <twb> But not relevant for "disk WDC-xxx is dead and I need to replace it with new blank disk WDX-yyy" ?
+    16:37 <rlaager> Correct. That's just a regular replacement that's worked since "forever".
+    16:37 <twb> Yay
