@@ -208,6 +208,29 @@ How do we boot ZFS?
     "[GPT1][md metadata][FAT][blank][GPT2]".  But UGH.
 
 
+ZOL 0.8~rc4?
+------------
+
+* ZOL 0.8 adds a systemd generator (zfs-mount-generator).
+  This makes /etc/fstab obsolete and allows mounts to be done ENTIRELY inside ZFS.
+  Without this, ZFS and systemd fight, and you have to jump through hoops to work around it.
+
+* ZOL 0.8 adds native ZFS full-disk encryption.
+  We want this for the offsite host.
+
+  If we do it for new omega itself, then
+
+  1) the offsite host *NEVER* needs to know the decrypt key; but
+  2) every time omega has a power outage, someone has to provide the decrypt key.
+
+  If we set up alpha the same way, the same applies to alpha.
+  If we don't, then I *think* snapshots of alpha sent to the offsite DR will be unencrypted?
+  I'm not too sure.
+
+  This is still super experimental, so I'm not really comfortable with it.
+  We will probably end up with the shitty situation of missing out on this by <1y, and
+  having unencrypted new-alpha and new-omega, and LUKS encrypted offsite DR.
+
 
 References
 ==========
@@ -930,3 +953,93 @@ IRC Logs
     16:36 <twb> But not relevant for "disk WDC-xxx is dead and I need to replace it with new blank disk WDX-yyy" ?
     16:37 <rlaager> Correct. That's just a regular replacement that's worked since "forever".
     16:37 <twb> Yay
+
+
+    18:13 <twb> https://github.com/zfsonlinux/zfs/wiki/Debian-Buster-Encrypted-Root-on-ZFS says- oh never mind.  It's written for the future, after ftpmasters move 0.8~rc from NEW to experimental.
+    18:15 <sphalerite> jtara: not so much a use case as "what happens if I accidentally move the disks around badly, and how afraid should I be of it?"
+    18:15 [twb tries to remember why CCM or GCM is better than plain old CBC or CTR]
+    18:16 <lundman> position based ivset generation?
+    18:16 <twb> Ah, they appear to do the authentication AND encryption as mode, rather than chaining CBC/OTR and a separate MAC
+    18:17 <twb> Originally they were separate, which meant that everyone screwed up combining them
+    18:17 <twb> And most of my textbooks are from that era :-)
+    18:19 <twb> GCM was first published in 2005; CCM in 2003.
+    18:21 <twb> Ohhh does 0.8 add zfs-mount-generator for systemd?
+    18:21 <twb> Because that's something I've been worrying about
+    18:21 <twb> (the lack of it)
+    18:23 <jtara> sphalerite: basically if you totally remove a disk and then import a pool it will come up as degraded
+    18:23 <jtara> and you'll need to take steps to really break the mirror so to speak
+    18:25 <jtara> my security guys are really happy about tightly coupled authenticated encryption, i think that's going to be a deciding factor
+    18:26 <twb> Yeah it makes sense
+    18:27 <twb> I'm just 15 years behind best *current* practice :-)
+    18:27 <jtara> yes well :)
+    18:28 <jtara> the thing a lot of places have issues with is that pool metadata itself is not encrypted
+    18:28 <jtara> volume names, properties, on-disk zfs structure metadata
+    18:28 <twb> Not at all, not ever?
+    18:29 <jtara> the whole point is you want a pool to be able to manage data it doesn't have the key for
+    18:29 <jtara> so all the payload data itself is secure
+    18:29 <twb> IIRC ecryptfs had that problem
+    18:29 <jtara> well none of the structural metadata contains anything revealing
+    18:29 <jtara> it's just "this chunk is linked to this node"
+    18:30 <twb> Oh hang on.  When you say pool metadata, you don't mean dirents
+    18:30 <jtara> right
+    18:30 <twb> OK you just mean like the equivalent of LVM and md metadata -- "I'm a RAIDn array with three disks named X, Y and Z" sort of metadata
+    18:31 <jtara> well, kind of
+    18:31 <jtara> basically the metadata block for each leaf data block has things like its checksum
+    18:31 <jtara> and where the data block itself is stored
+    18:31 <twb> Are the names and snapshot times of the zvols/zfses encrypted?
+    18:31 <jtara> so you might know that there is a file or volume X, which has at position Y a chunk of data Z
+    18:31 <jtara> but you don't know what X is or what the data inside Z says
+    18:32 <twb> Or can the attacker see e.g. there is a snapshot called illegal-porn@2007-01-01
+    18:32 <jtara> snapshot and volume names are in the clear
+    18:32 <jtara> so that as you apply deltas you can manipulate them
+    18:32 <twb> Oh, another dumb question then
+    18:32 <jtara> like, you can apply an incremental zfs send of encrypted data, then delete an old snap to do an incremental roll
+    18:33 <jtara> and you never need the encryption keys to do so
+    18:33 <twb> If I zfs send encrypted data to an offsite backup, does and offsite host just holds it, never "uses" it, does the offsite host *ever* have to decrypt it?
+    18:33 <jtara> honestly if you have people who work with you who manage to hide useful information in pool or dataset names, more power to you, i can't get mine to :p
+    18:33 <jtara> it never has to decrypt it
+    18:34 <twb> that's awesome
+    18:34 <jtara> you can zfs receive into that pool without the key, and zfs send out of it without the key
+    18:34 <jtara> yeah
+    18:35 <jtara> and you can rekey things without reencryption
+    18:35 <jtara> hopefully i can take advantage of that to give my backups a specific key per time period, while keeping all the source pools with totally random keys
+
+    18:52 <twb> rlaager: BTW, you can do "apt-get build-dep" on a directory, rather than having to copy things from debian/control Build-Depends by hand
+    18:52 <twb> e.g. git clone .../zfs.git && sudo apt-get build-dep ./zfs
+    19:14 <twb> 18:21 <twb> Ohhh does 0.8 add zfs-mount-generator for systemd?
+    19:14 <twb> ...I can see in git that it does.
+    19:32 <twb> Boy the ZOL codebase does a lot of $(MAKE) -C
+    19:33 [twb waves the RMCH paper around grumpily]
+
+    19:41 <twb> X: zfsutils-linux: missing-systemd-timer-for-cron-script etc/cron.d/zfsutils-linux
+    19:41 <twb> 24 0 8-14 * * root [ $(date +\%w) -eq 0 ] && [ -x /usr/lib/zfs-linux/scrub ] && /usr/lib/zfs-linux/scrub  # Scrub the second Sunday of every month.  
+    19:41 <twb> That looks pretty straightforward...
+    19:42 <twb> zfs-scrub.timer: [Timer] OnCalendar=Sun/2 *-*-*
+    19:43 <twb> zfs-scrub.service: [Service] Type=oneshot ExecStart=/usr/lib/zfs-linux/scrub
+    19:43 <fling> Lalufu: not even in master yet?
+    19:43 <Lalufu> I couldn't say
+    19:43 <Lalufu> it might be
+    19:43 [fling checking]
+    19:44 <fling> Is not trim eating data anymore?
+    19:44 <twb> Ah my math might be a little wrong, I think mine would run "once per fortnight, on sundays" rather than "once per month, on the second sunday of that month"
+    19:45 <twb> OnCalendar=Sun *-*-8..14 00:24:00
+    19:48 <twb> looks good to me
+    19:48 <twb> "NEXT: Sun 2019-05-12 00:24:00 AEST  LEFT: 2 weeks 4 days left "
+
+2019-04-23 ##eros-chat::
+
+    18:24 <twb> MTecknology: so are you moving things from NEW queue still
+    18:24 <twb> MTecknology: because as it happens zfs 0.8 is in there right now, wanting to move from NEW to experimental
+    18:24 <twb> MTecknology: and that version fixes systemd integration AND adds full-disk encryption
+    18:25 <MTecknology> that sounds like an unpleasant review
+    18:25 <twb> unpleasant for you maybe but convenient for me when it's done ;P
+    18:25 <twb> AIUI it's only going into experimental ANYWAY so it's not like it should be a big deal, except maybe licensing?
+    18:26 <twb> I don't know where the ftpmasters keep their notes about NEW queue, though
+    18:30 <MTecknology> It's in a postgresql db that's kind of unpleasant to attach to.
+    18:30 <MTecknology> I don't see any notes on it
+    18:47 <twb> righto
+    18:48 <twb> Do you know the URL to dget stuff from NEW queue?  It's kinda hidden because they don't want people playing with it
+    18:53 <MTecknology> I don't see anything available. That should probably be a new addition
+    18:54 <twb> don't worry the upstream instructures are building it from a git on salsa anyway, which is near enough
+    18:56 <MTecknology> Have you ever used pbuilder or sbuild?
+    19:11 <twb> MTecknology: not for a decade
