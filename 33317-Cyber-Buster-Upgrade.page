@@ -247,16 +247,28 @@ ZOL 0.8~rc4?
   We will probably end up with the shitty situation of missing out on this by <1y, and
   having unencrypted new-alpha and new-omega, and LUKS encrypted offsite DR.
 
+How do I grow the refind ESP enough to put kernels in there?
+------------------------------------------------------------
+* gparted can grow a FAT32 filesystem
+* parted 3.0+ has no "resize", only "resizepart", which explicitly does not touch the filesystem, only the partition.
+* gparted is doing the resize by calling libparted's fat_resize(), AFAICT.
+* libparted's provides no way to access fat_resize() from a script or CLI?
+* no other tools, e.g. dosfsutils, seem to provide a filesystem-only growing tool a la resize2fs for ext4.
+* UPDATE: apt install fatresize ???
+
+
 
 References
 ==========
 * `lshw-omega-understudy.html`_
 * https://www.supermicro.com/products/motherboard/Xeon/C600/X9SRi-F.cfm
-* https://github.com/zfsonlinux/zfs/wiki/Debian-Buster-Root-on-ZFS
+* https://github.com/zfsonlinux/zfs/wiki/Debian-Buster-Root-on-ZFS  (Using ZFS 0.7)
+* https://github.com/zfsonlinux/zfs/wiki/Debian-Buster-Encrypted-Root-on-ZFS  (Using ZFS 0.8~rc4 from experimental)
 * https://github.com/pbatard/efifs
 * https://efi.akeo.ie/downloads/efifs-1.3/x64/zfs_x64.efi
 * https://github.com/hn/debian-buster-zfs-root
 * https://raw.githubusercontent.com/hn/debian-buster-zfs-root/master/debian-buster-zfs-root.sh
+* http://open-zfs.org/wiki/Feature_Flags
 
   I have confirmed the EFIFS 1.3 uses grub-core's zfs.c almost at HEAD.
   This is the commit of grub that efifs is using::
@@ -1062,3 +1074,81 @@ IRC Logs
     18:54 <twb> don't worry the upstream instructures are building it from a git on salsa anyway, which is near enough
     18:56 <MTecknology> Have you ever used pbuilder or sbuild?
     19:11 <twb> MTecknology: not for a decade
+
+2019-04-24 #flashrom::
+
+    18:43 <twb> I have a dumb question.
+                I have a boring Debian x86_64 system, with a boring FAT32 ESP, and
+                I want to copy /boot into the ESP anytime /boot changes.
+                Somebody told me "flashrom does basically that, for more complicated hardware,
+                  where the number of erase cycles is really small.
+                  So it should already have OS integration to know WHEN to reflash the kernel and ramdisk."
+    18:43 <twb> But I'm looking at the flashrom package and all I see is the binary itself,
+                no hooks into apt or update-initramfs or anything.
+    18:44 <twb> Am I looking wrong, or was my friend too optimistic?
+    18:54 <twb> Ah sorry to bother you.  It seems I was confusing flashrom with flash-kernel
+    19:14 <Hellsenberg> twb: I think you did :P
+
+2019-04-24 #debian-arm::
+
+    18:48 <twb> Hey, suppose I have a dumb system, where just dropping a new kernel and ramdisk into /boot isn't enough, but some extra flashing process has to happen afterward.  What part of Debian makes that actually happen?  I thought flashrom had a update-initramfs hook or dpkg trigger, but I don't see it.
+    18:50 <hrw> twb: flash-kernel?
+    18:51 [twb starts poking around the installation-guide-armhf and-]
+    18:51 <twb> ah, thanks
+    18:51 <hrw> flashrom is a tool to update bios chips and other flashable firmware chips
+    18:54 <twb> My use case is pretty silly.  I'm actually on x86-64 UEFI, and for stupid reasons I want to just copy /boot into the ESP anytime /boot changes.  Rather than guessing /etc/kernel/postinst.d/ or something, I wanted to see see how other people were already solving this, and steal their answers
+    18:55 <hrw> twb: you know that you do not need to have kernels in ESP?
+    18:56 <twb> I know, but then I have to move /boot out of my main ZFS pool
+    18:56 [pabs3 would just run rsync from an apt hook]
+    18:59 <twb> pabs3: yeah that would be the 90% right solution.  That wouldn't cover e.g. tweaking /etc/initramfs-tools/conf.d/ and then doing an "update-initramfs -u"
+    19:00 <pabs3> ack, I would only ever tweak that via apt
+    19:00 <hrw> twb: maybe you need to tweak grub to read zfs?
+    19:00 <twb> hrw: grub2.02/efifs1.3 can't read ZFS pools with some newer features enabled - notably ZFS-native encryption
+    19:01 <twb> http://ix.io/1H3C if you want the gory details
+    19:10 <hrw> twb: make non-encrypted pool for /boot maybe?
+    19:10 <twb> hrw: at which point, it needs to live somewhere
+    19:13 <hrw> true
+    19:23 <twb> Looks like flash-kernel adds /etc/initramfs/post-update.d/ *and*
+                                             /etc/kernel/{postinst,postrm}.d/, and also
+          a dpkg trigger for ITSELF, and also
+          an initramfs-tools hook to (I think) resolve root=UUID=X in advance,
+          in case udev/libblkid isn't available at boot time.
+
+2019-04-24 #zfsonlinux::
+
+    19:50 <twb> OK help me out here.  I have a pool of disks and I want to take down the pool and wipe the metadata, prior to creating a new pool
+    19:51 <twb> umount -a -t zfs and zpool export -a are refusing to get rid of some stuff, even though lsof says nothing is actually open
+    19:51 <twb> so I went "sod it" and tried to just do "wipefs -a /dev/sda", and even THAT fails: wipefs: error: /dev/sda: probing initialization failed: Device or resource busy
+    19:56 <twb> Unrelated: for a small SATA/AHCI server, is it better to use /dev/disk/by-id/wwn-XXX or /dev/disk/by-id/ata-XXX ?  The FAQ isn't very clear.
+
+2019-04-24 #parted::
+
+    21:32 <twb> gparted can resize the *filesystem* in a FAT32 ESP GPT partition.
+    21:32 <twb> AFAICT, parted can't actually do that.
+    21:33 <twb> But gparted appears to just be asking libparted to do it, so... WTF?  Is filesystem resizing limited to people without visual impairment?
+    21:33 <twb> (parted used to have "resize", but current versions only seem to have "resizepart", which explicitly doesn't affect the filesystem, only the partition)
+    21:35 <twb> libparted definitely has libparted/fs/r/fat/resize.c:fat_resize()
+    21:35 <twb> So how do I access that functionality, without a GUI?
+    21:49 <twb> A-ha!  This isn't supported by any of the normal fat packages (e.g. dosfstools), but there is a package that does *just* this, using libparted for the actual work.  http://sf.net/projects/fatresize
+    21:49 <twb> Sorry I lost my temper
+
+2019-04-24 #emacs::
+
+    <RANTING ABOUT #PARTED>
+    21:46 <npostavs> twb: https://manned.org/fatresize.1 maybe?
+    21:47 <twb> npostavs: ah thanks
+    21:47 <twb> That exists in Debian
+    21:47 <twb> I was looking under dosfstools and similar
+    21:50 <mkletzan> And it looks like fatresize is in portage as well.  Stupid me for trying to eat more healthy and get some exercise...
+    21:51 <twb> It looks at a glance like fatresize was basically someone who was in the same position as me, but a couple of years ago
+    21:51 <twb> And unlike me, they actually cared enough to solve it for other people
+    21:52 <mkletzan> otoh the efi partition is usually small enough to copy the data elsewhere, reformat and copy back
+    21:53 <twb> mkletzan: that requires me to get things like the fat size correct, and it's easy to fuck up such things
+    21:53 <twb> e.g. mkfs.vfat on a 4MB disk will be FAT12 or 16 by default, and then SOME firmwares will ignore it
+    21:53 <mkletzan> `-F 32` ?
+    21:54 <twb> yeah, but you have to notice that and remember to use it
+    21:54 <twb> "grow the thing that's already there and works" is (hopefully) harder to fuck up
+    21:54 <mkletzan> agreed
+    21:54 <twb> hahaha
+    21:54 <twb> Note ==== You can't resize FAT32 partition lesser than 512Mb because Windows(R) doesn't work properly with small FAT32 file system. Use FAT16.
+    21:55 <twb> I think they mean MiB not Mbit
