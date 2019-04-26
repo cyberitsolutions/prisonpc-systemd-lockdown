@@ -1152,3 +1152,293 @@ IRC Logs
     21:54 <twb> hahaha
     21:54 <twb> Note ==== You can't resize FAT32 partition lesser than 512Mb because Windows(R) doesn't work properly with small FAT32 file system. Use FAT16.
     21:55 <twb> I think they mean MiB not Mbit
+
+2019-04-26 #systemd::
+
+    15:18 <twb> Hey, you know how having systemd in the ramdisk is generally a Good Thing?
+    15:19 <twb> And debian and arch don't do that by default, and for arch it's just a simple config option.
+    15:19 <twb> On debian, is "just use dracut (not initramfs-tools)" the best way to get a systemdized ramdisk?
+    15:21 <Xogium> twb: yeah that's what I do here. Except I generate the initramfs as a standard cpio archive that I embed into the kernel, via buildroot. My initramfs contains systemd as init, busybox for all the shells and utilities, and whatever deps from util-linux is required. 4 mb in size compressed in xz
+    15:21 <Xogium> I'm just not sure why systemd doesn't seem to recognize that it is inside an initramfs
+    15:22 <twb> Xogium: are you doing that via dracut, or are you doing some kind of hand-rolled business?
+    15:22 <Xogium> I do have /etc/initrd-released inside, or forcing initrd.target on kernel cmdline would have failed spectacularly
+    15:23 <Xogium> twb: no dracut, no mkinitcpio. But buildroot is able to create a cpio archive suitable for use as an initramfs with whatever packages you selected in your rootfs
+    15:23 <twb> My immediate use case is I'm rolling a modern Debian Buster system with multi-disk ZFS for root (with a zfs-mount-generator), and I'm hoping dracut will be more future-proof-y.
+    15:24 <twb> #systemd used to get people with confused systems because init was plain sh and / was multi-disk btrfs, which made me afraid
+    15:24 <twb> I mean /bin/init in the initrd was a sh script
+    15:24 <Xogium> heh I can understand
+    15:25 <grawity> Arch's sh-based initramfs just runs `btrfs device scan`
+    15:25 <grawity> not sure what archzfs stuff does, but it also *seems* to work fine with my pool, so I haven't really tried systemd initramfs on the fileserver yet
+    15:26 <grawity> (it doesn't help that the initial 242 release completely broke systemd-initramfs for everyone)
+    15:26 <Xogium> here /bin/init points to systemd, but it is very minimal, contains only one or two other things, not even networkd, since I don't actually need it, having a serial console whenever I want
+    15:26 <Xogium> grawity: did it ?
+    15:26 <grawity> so say the people affected by it
+    15:26 <twb> Xogium: yeah I accept that it works for you, but you're being a bit more "unique snowflake" than I have in mind for my current system
+    15:27 <grawity> Xogium: https://git.archlinux.org/svntogit/packages.git/commit/trunk?h=packages/systemd&id=aa6c53bf7c18ef733da2bcf3e33324dda151b39f
+    15:27 <Xogium> I'm on systemd 242.0-1 and I had no problem, though I've seen people complain a LOT
+    15:28 <grawity> my dev system went from 241-git to 242-git and I haven't actually booted it to Linux for two weeks anyway, so I haven't experienced this personally
+    15:28 <Xogium> twb: hehe well I'm simply trying to use this new systemd.volatile=overlay for my tiny system here
+    15:29 <twb> I'm not familiar with that
+    15:29 <twb> I haven't really kept track since v219
+    15:29 <Xogium> and I do need an initramfs for this, so I had to figure how to do it in buildroot
+    15:30 <Xogium> new stuff in 242, mounts the root device read-only with a writable tmpfs on top using overlayfs, that way anything you modify there is lost after a reboot, perfet for what I plan here, making the system go back to sane default
+    15:30 <Xogium> *perfect even
+    15:31 <twb> Looks like I'll be on v241, at least initially.
+    15:32 <Xogium> grawity: haha I made sure to reboot right after the update, just to see what it'd do, and I didn't have such problem lucky for me I imagine
+    15:33 <Xogium> that being said I think someone had an even weirder issue, this is the second time I see a machine getting stuck on 'loading initial ramdisk...'
+    15:37 <Xogium> anyway, for what I'm doing here, clearly using rd.systemd.unit= on cmdline is a workaround, but I'm still not understanding why it treats the initramfs as a normal rootfs without this, I also have /etc/initrd-release into it
+    15:38 <Xogium> might be coming from the fact I have a fully fledged systemd in the filesystem, and not just a couple binaries and services with targets such as multi-user.target for example, I have no idea
+    15:39 <Xogium> I've been trying to do the best of both worlds with buildroot in this case
+    15:43 <twb> Xogium: without that, how does systemd (running in the initrd) know whether the initrd is the "final system", or if it's destined to mount /root and switch_root?
+    15:44 <twb> Because you might just be packing the final rootfs into the initrd and then stopping, e.g. for a smartbulb firmware
+    15:46 *** [diablo] JOIN
+    15:46 <Xogium> I'm not sure that's what I've been trying to find out, how does it determine to be in an initramfs at all… boucman_work found that it apparently just check for /etc/initrd-release, so I'm guessing that I have a bunch of stuff that I'd need to take out of my initramfs or something, because it doesn't react at all how I expect it to
+    15:48 *** oiaohm QUIT Read error: Connection reset by peer
+    15:48 *** oiaohm JOIN
+    15:52 <Xogium> hmm
+    15:53 <Xogium> okay so by examining the archlinux initramfs they just pack a lot less systemd stuff than me
+    15:54 <Xogium> but they've made the default target be initrd.target in the first place, so I could also just do the same and it would work, my default target is multi-user.target because that's how buildroot makes it by default
+    15:55 <twb> bootup(7) has some info about that
+    15:58 <Xogium> yeah, the charts are a bit difficut to parse with my screen reader, but I think I got the basic idea of it
+    15:58 <Xogium> *difficult
+    15:59 <twb> Xogium: ah ouch.  I can manually convert it to graphviz-format if it helps
+    15:59 [twb is sighted]
+    16:00 <Xogium> hehe I've never used graph, so I'm not at all sure how helpful that would actually be
+    16:00 <twb> Ruh Roh, in Debian, intel-microcode might not work with dracut
+    16:01 <Xogium> well that's annoying
+    16:01 <twb> amd-microcode, by comparison, explicitly supports either initramfs-tools or dracut or tiny-initramfs
+    16:01 <twb> (tiny-initramfs is similar design to RH ash - bare minimum all in one C binary as /init)
+
+2019-04-26 #debian-kernel::
+
+    15:31 <twb> Hey, dumb question.  Does/will buster have something like ksplice, so I can get kernel bugfixes without a full reboot?  ISTR there was mainline replacement for ksplice in the news recently...
+    15:34 <pabs> there isn't a Debian service producing patches yet, Ubuntu has one though
+    15:34 <pabs> I haven't heard of anyone working on one either
+    15:35 <twb> Oh.  I assumed that happened automagically by just having the finished kernels in /boot :P
+    15:36 <twb> It looks like the low-level functionality is in mainline 4.0, shared between kpatch (RH) and kgraft (SUSE)
+    15:37 <pabs> I got the impression it needs a service, not sure tho https://linux-audit.com/livepatch-linux-kernel-updates-without-rebooting/
+    15:38 <twb> FTR the high-level goal is to bypass the "file a Change Request and wait 6 weeks for approval" step.  The actual reboot itself wouldn't be a big deal.
+    15:38 <pabs> shame ksplice didn't get merged, this new feature looks pretty useful: https://blogs.oracle.com/linux/using-ksplice-to-detect-exploit-attempts
+    15:39 <twb> pabs: AFAICT oracle bought ksplice and shut it down
+    15:39 <twb> pabs: which was when RH et al spun up their own replacements
+    15:40 <pabs> seems like it is still available, gratis for Ubuntu/Fedora https://ksplice.oracle.com/
+    15:42 <twb> "Support for RHEL changed to a free 30-day trial for RHEL customers as an incentive to migrate to Oracle^[5]^[6] and use of the Oracle Unbreakable Enterprise Kernel (UEK) became mandatory for Ksplice on production systems.^[7]"
+    15:42 <twb> So yeah, it's available on desktops but they clearly want to lock in all the serevrs
+    15:42 <pabs> apparently one can build ones own patches, the tools aren't in Debian tho http://chrisarges.net/2015/09/21/livepatch-on-ubuntu.html
+    15:43 <pabs> (linked from https://blog.dustinkirkland.com/2016/10/canonical-livepatch.html)
+    15:44 <pabs> woops, kpatch is in Debian
+    15:45 <twb> Can I do that from pre-built debian kernels, or would I have to roll my own kernels from the .DSCs?
+    15:53 <pabs> kpatch-build apparently relies on building the source twice with extra options. kgraft seems to use debug info from the old/new kernels
+    15:54 <twb> cool
+    15:54 <twb> but kgraft isn't in debian yet
+    15:55 <twb> So probably this won't be "Just Work" until debian 11
+    15:55 <pabs> (also not sure if that is outdated info)
+    15:55 <pabs> I think this is the first time I've seen anyone in/around Debian show interest in the livepatching stuff
+    15:57 <twb> I'm just sick of $customer's admin people dicking me around
+    15:57 <twb> I don't care enough to do a lot of work, but if you'd said "oh yeah just apt install XXX" then I'd be super happy :-)
+    15:58 <twb> kexec used to be that simple before systemd
+    15:58 <twb> so all my servers with 5 minute POSTs got nicer overnight
+    16:05 <pabs> hmm, can't find the code to kgraft userspace
+    16:12 <pabs> aha https://git.kernel.org/pub/scm/linux/kernel/git/jirislaby/kgraft.git/
+    16:13 <pabs> oh that is the old kernel stuff
+    16:17 <pabs> Gentoo's solution: https://wiki.gentoo.org/wiki/Elivepatch https://linuxplumbersconf.org/event/2/contributions/258/attachments/55/62/Elivepatch_Kernel_Summit_20182.pdf
+
+2019-04-26 #zfsonlinux::
+
+    12:40 <twb> Why does rlaager's Debian HOWTO use normalization=formD?  Didn't Apple used to force NFKD in HFS+, and realized it was a bad idea, and stopped doing it in APFS?
+    12:41 <twb> (Specifically, the badness happens when you have paths inside a file, e.g. in a .diff or .tar, created on a system with a different normal form.)
+    12:41 [twb checks the zfs manpages]
+    12:49 <CompanionCube> iirc the way apple normalizes things does indeed suck
+    12:49 <twb> CompanionCube: so basically the way ZFS does it, doesn't have the same problem?
+    12:51 <WrongDevice> hello
+    12:51 <WrongDevice> This pool uses the following feature(s) not supported by this system: 	org.zfsonlinux:userobj_accounting 	org.zfsonlinux:project_quota
+    12:51 <WrongDevice> i can disable those ?
+    12:51 <WrongDevice> without recreate the zpool ?
+    12:52 <WrongDevice> im trying to mount my zpool created with ZOL 0.8.0-rc4
+    12:52 <CompanionCube> on?
+    12:52 <WrongDevice> i want to mount it on mojave
+    12:53 <WrongDevice> using openzfs osx 1.9.0
+    12:53 <WrongDevice> last version
+    12:53 <WrongDevice> cannot be disabled those features ?
+    12:53 <WrongDevice> removed
+    12:53 <WrongDevice> i cannot write
+    12:54 <WrongDevice> and i moved from btrfs just to write my files from mac to linux
+    12:54 *** ChanServ MODE +v behlendorf
+    12:54 <twb> WrongDevice: I think you mean "can I disable those features, so I can use the pool from MacOS?"
+    12:54 <WrongDevice> thats why i moved to zfs inthe first place
+    12:54 <WrongDevice> yes
+    12:54 <WrongDevice> yes
+    12:55 <WrongDevice> no
+    12:55 <WrongDevice> ok yes
+    12:55 <CompanionCube> you can disable those features...at pool creation time
+    12:55 <WrongDevice> im confused
+    12:55 <twb> I don't know if you can disable them from an existing pool.  You can definitely make a new pool with those features never turned on.
+    12:55 <WrongDevice> omg
+    12:55 <Selavi> I don't think so. enabling features changes the on-disk format. a ZFS without those features won't know what to do with the extra info, and you don't want to write to a pool with unknown features as it could corrupt things
+    12:55 <WrongDevice> no
+    12:56 <WrongDevice> ok
+    12:57 <Selavi> those are both read-only compatible, so you can read from it at least
+    12:57 <WrongDevice> and whats the way to create a pool
+    12:57 <twb> Could WrongDevice do something like "zpool set -o featureX=disabled pool", then resilver?
+    12:57 <WrongDevice> no
+    12:57 <CompanionCube> twb: nope.
+    12:57 <CompanionCube> WrongDevice: if you don't know that...how did you make the pool in the first place?
+    12:57 <WrongDevice> zpool create -f zroot /dev/disk/by-id/id-to-partition-partx
+    12:57 <WrongDevice> that
+    12:57 <WrongDevice> ^
+    12:58 <WrongDevice> command
+    12:58 <CompanionCube> OK then
+    12:58 <WrongDevice> what i need to add to that command disabling the two features i dont want
+    12:59 <WrongDevice> ?
+    12:59 <twb> WrongDevice: -o xxx=disabled, I think, for each of the "bad" features
+    13:00 <WrongDevice> ok
+    13:01 <Selavi> do you have to use the full flag name with the project prefix, or just simple name? I assume simple?
+    13:01 <twb> I *think* there is also an option called something like "grub" or "portable" which tries to turn off bad things
+    13:01 <CompanionCube> nope
+    13:02 <WrongDevice> what i need to do for future reference to make a pool compatible with freebsd too
+    13:02 <WrongDevice> and the truebsd is using zol now , all the zol features are compatible with trueos zol ?
+    13:03 <twb> There's a table in the wiki somewhere of all the features and what systems support which ones
+    13:04 <WrongDevice> where ?
+    13:04 <twb> http://www.open-zfs.org/wiki/Feature_Flags
+    13:04 <zfs-bot> [ Feature Flags - OpenZFS ] - www.open-zfs.org
+    13:04 <twb> Sorry I'm a bit slow today, I'm not in my real office
+    13:04 <jasonwc> twb, There is discussion about making such a flag.  It does not exist at this time.
+    13:05 <twb> jasonwc: ah thanks.  I misremembered that it existed but didn't work very well :-)
+    13:05 <jasonwc> WrongDevice, First off, do you need write access to this pool? If not, you can simply mount it read-only on OS X since those flags are read-only compatible.
+    13:06 <twb> Is userobj_accounting similar to ext4's usrjquota?  i.e. per-UID EDQUOT block and inode caps?
+    13:06 <jasonwc> WrongDevice, Relatively few features are not read-only compatible.
+    13:06 <WrongDevice> yes i want to write
+    13:07 <jasonwc> twb, man zpool-features says " This feature allows administrators to account the object usage information by user and group."
+    13:08 <twb> I want to limit $HOME for human users to 1GB each, but I planned to do that by just giving each one a separate dataset with a cap (i.e. zfs create -o quota=1G pool/home/alice)
+    13:09 <jasonwc> WrongDevice, Based on the feature flag chart, for OS X, you'll want to disable encryption, resilver_defer, allocation_class, large_dnode, project_quota, and userobj_accounting
+    13:09 <lundman> depends what you run? 1.9.0 only project_quota and userobj_accounting
+    13:10 <twb> lundman: 12:53 <WrongDevice> using openzfs osx 1.9.0
+    13:10 <lundman> i only read 5 lines above, more is too heavy!
+    13:10 <CompanionCube> but question was 'what flags for freebsd' though?
+    13:10 <jasonwc> WrongDevice, The other ones are likely enabled but not active so they aren't causing issues.  Encryption won't be active unless you create an encrypted dataset.  resilver_defer is only active during a deferred resilver. Allocation classes would require adding a special vdev.  Large_dnode would require setting dnode size to something other than the default of legacy
+    13:10 <CompanionCube> though the answer to that will be changing in the medium-term :p
+    13:11 <jasonwc> WrongDevice, but you're getting hit by userobj_accounting and project_quota because they become active as soon as they are enabled and can't be disabled
+    13:11 <jasonwc> the others can be disabled if not active
+    13:11 <WrongDevice> lundman: hello
+    13:11 <lundman> o/
+    13:11 <WrongDevice> yeah 1.9.0
+    13:11 <lundman> I only cut that this morning
+    13:12 <jasonwc> lundman, The feature chart should be updated then.  It shows resilver_defer as unsupported on OS X master
+    13:13 <WrongDevice> ok recreating now
+    13:13 <lundman> it should
+    13:13 <WrongDevice> i have to reboot to a liveusb
+    13:13 <twb> WrongDevice: good luck! :-)
+    13:13 <WrongDevice> yeah
+    13:14 <WrongDevice>  thanks
+    13:14 <lundman> good thing I added feature=disabled too
+    13:15 <WrongDevice> i will no need to do disable anything else for use freebsd , i mean freebsd is too broken for my laptop atm , and too damm old graphic stack , this hackintosh works 100 times better than freebsd
+    13:16 <WrongDevice> lundman: nice so this means i can create the pool here now and use it for linux
+    13:16 <WrongDevice> maybe not good idea
+    13:16 <WrongDevice> ...
+    13:18 <jasonwc> WrongDevice, From looking at the feature chart, assuming you don't change defaults, if you disable project_quota and userobj_accounting, you should be fine on FreeBSD 12 as well
+    13:18 <WrongDevice> lundman: one thing how i create a hostid spl hostid on mac ? or show i set a spl hostid like i set it on the linux kernel command line ?
+    13:19 <WrongDevice> jasonwc: good to know thank u
+    13:19 <WrongDevice> the table is not easy to read for me
+    13:19 <WrongDevice> but i understand what i was looking for to solve my little issue with osx
+    13:19 <lundman> it generates a hostid if not set. So either set it with sysctl, or just let it set for you
+    13:20 <WrongDevice> lundman: i need to set the . same spl hostid for all my oses
+    13:20 <lundman> because?
+    13:20 <WrongDevice> i know how to do this before but i forgot
+    13:20 <WrongDevice> to not have to import -f and export all the time
+    13:21 <WrongDevice> im using  clover
+    13:21 <lundman> just import -f on boot, no need to export
+    13:21 <WrongDevice> any way to set it in clover ?
+    13:21 <twb> WrongDevice: probably /etc/hostid doesn't match in your live system and real system
+    13:21 <twb> WrongDevice: just copy /etc/hostid from one system to the other, so they have the same value
+    13:21 <WrongDevice> i have two linux using the same hostid
+    13:22 <WrongDevice> no is for osx
+    13:22 <WrongDevice> that only maybe work on linux
+    13:22 <WrongDevice> i dont know
+    13:22 <twb> WrongDevice: ah, I misunderstood the question, sorry
+    13:23 <CompanionCube> heh, you can see the results of https://github.com/zfsonlinux/zfs/pull/8641 on one of the feature tables :p
+    13:23 <zfs-bot> [GitHub] [zfsonlinux/zfs #8641] rlaager: zpool-features(5) and other man page fixes | ### Motivation and Context This fixes some issues with zpool-features(5) and zfs-module-parameters(5)...
+    13:24 <WrongDevice> lundman: ok how is set with sysctl ?
+    13:25 <lundman> sysctl kern.hostid=
+    13:25 <WrongDevice> where i can see my current spl.hostid
+    13:25 <lundman> afaik
+    13:25 <WrongDevice> ok
+    13:25 <twb> and sysctl -a should print all the things it knows about, so "sysctl -a | grep hostid" should tell you something useful.
+    13:26 <WrongDevice> hmm this number is bigger than the ones on linux
+    13:26 <WrongDevice> on linux are jsut 8 chars
+    13:26 <lundman> sysctl -x kern.hostid
+    13:26 <twb> WrongDevice: AFAIK hostid is always a 32-bit integer
+    13:26 <twb> WrongDevice: so the biggest value should be 4294967296
+    13:27 <lundman> sysctl kern.hostid=0xde816bec
+    13:27 <WrongDevice> nice
+    13:28 <WrongDevice> yeah now i just need to use this one from osx on all the others linuxes
+    13:28 <WrongDevice> thank u
+    13:28 <twb> https://bugs.debian.org/595790  has a discussion of the "backstory" of hostid
+    13:28 <zfs-bot> [ #595790 - The value from gethostid() should be more unique and not change when the host IP changes - Debian Bug report logs ] - bugs.debian.org
+    13:29 <lundman> Fowler/Noll/Vo FNV-1a hash of your ioplatformuuidstr
+    13:29 <lundman> if you want the details :)
+    13:29 <lundman> (on osx)
+    13:30 <twb> Is ZFS ever likely to get Zstd or LZMA2?  I'm thinking mainly of /var/log/ (write-once read-never).
+    13:32 <jasonwc> twb, There's already a working PR for zstd on ZoL
+    13:32 <twb> Cool
+    13:33 <jasonwc> twb, https://github.com/zfsonlinux/zfs/pull/8044
+    13:33 <zfs-bot> [GitHub] [zfsonlinux/zfs #8044] BrainSlayer: Support zstd compression (port of Allan Judes patch from FreeBSD) | This Patch adds zstd compression support zo ZFS ...
+    13:33 <jasonwc> I was told it works fine aside from requiring more memory than other compressors
+    13:33 <jasonwc> should be faster than gzip with better compression but much slower than lz4
+    13:33 <twb> What abuot blake2? :-)
+    13:33 <CompanionCube> originated from a freebsd diff, no? Still not merged in either, though.
+    13:34 <jasonwc> yeah
+    13:34 <jasonwc> Allan Jude wrote the FreeBSD one
+    13:35 <jasonwc> I believe there is an issue if compressed ARC is disabled, but the option to disable compression for ARC may be removed
+    13:41 <CompanionCube> twb: btw about the normalization thing, google finds good stuff like https://zfs-discuss.opensolaris.narkive.com/3NqQVG0H/utf8only-and-normalization-properties
+    13:41 <zfs-bot> [ utf8only and normalization properties ] - zfs-discuss.opensolaris.narkive.com
+    13:43 <twb> CompanionCube: thanks
+    13:44 <CompanionCube> the difference is basically *when* the normalization happens
+    13:46 <twb> Hrm, OK.  I assumed utf8only (no normalization=) meant that it'd allow non-normalized (i.e. mixed-normalization) codepoint sequences in file namse
+    13:47 <CompanionCube> no normalization is nornalization=none though
+    13:48 <twb> So surely that means when = never
+    13:49 <twb> (unless the userland application chooses to normalize)
+    13:49 <CompanionCube> (btw i meant 'diference' vs apple's method)
+    13:50 <twb> ah
+    13:50 <twb> That makse more sense :-)
+    14:15 <rlaager> twb: normalization in ZFS preserves the bytes of the filename, in whatever form they are in. It only affects the indexing. So it won't break tarballs with a different normal form. However, it implies utf8only, which will be a problem if you unpack a tarball with non-UTF8 filenames.
+    14:15 <twb> What does "indexing" mean, there?
+    14:17 <rlaager> Sorry, the index of directory entries. So if you try to open("file_in_NFC") or open("file_in_NFD"), they open the same file.
+    14:18 <twb> Whereas if there was no normalization, those would be different byte sequences and therefore different files?
+    14:19 <rlaager> Correct.
+    14:22 <twb> Righto
+    14:24 <CompanionCube> and also isn't it nfd in particular because the other choices are either identical or slightly slower?
+    14:29 <twb> Is the SMB and SID stuff in zfs manpages at all relevant to a linux samba AD/SMB server?  AIUI the answer is "no, that all happens inside samba and user xattrs, and is invisible to ZFS"
+    14:58 <twb> rlaager: in your HOWTO, you try to keep the "OS" separate from the user/OS data.  But e.g. rpool/home and rpool/var/mail are still in separate trees.  Wouldn't it make more sense to have only 2 or 3 top levels, like rpool/OS/debian and rpool/USER/home rpool/USER/mail rpool/USER/www ?
+    14:59 <rlaager> Yes, that's a perfectly reasonable approach.
+    15:00 <twb> Any reason you did't already do that in the howto?
+    15:00 <javashin> lundman, hi
+    15:01 <rlaager> twb: I'm not 100% sure yet, and I'd like to avoid making changes that later get undone.
+    15:01 <javashin> on osx there is a zfs-import service that try to import everything at boot ? if yes how i disable that ?
+    15:02 <PMT> IMO rpool/.../USER/{www,mail,...} makes sense for a multi-user env, but at that point a lot of people might have .../USER on a different pool.
+    15:02 <lundman> o/
+    15:02 <twb> rlaager: righto
+    15:02 <lundman> javashin: there is a launchctl script that run on boot
+    15:02 <lundman> which executes the zpool-import-all.sh scipt
+    15:02 <lundman> just comment out "zpool import" line in it
+    15:02 <twb> Another thing I didn't understand: why are you making zfs's for intermediary paths, e.g. you have a "real" / and a "real" /var/mail, but you also make a /var that doesn't seem to do anything
+    15:03 <javashin> what is the location of that script ?
+    15:03 <javashin> and thanks by the way
+    15:03 <lundman> scripts/zpool-autoimport.sh
+    15:03 <lundman> but you probably meant once it is installed
+    15:04 <javashin> yeah
+    15:04 <lundman> one sec
+    15:04 <javashin> no prob
+    15:04 <lundman> the plist is in /Library/LaunchDaemons/org.openzfsonosx.zpool-import-all.plist   ... and
+    15:05 <lundman> it executes /usr/local/libexec/zfs/launchd.d/zpool-import-all.sh
+    15:05 <javashin> nice
+    15:08 <rlaager> twb: The /var "container" is just to keep a 1:1 relationship between the dataset hierarchy and the filesystem hierarchy, such that inheritance works, avoiding the need to set mountpoints on rpool/var/*.
+    15:10 <twb> But it's not 1:1 already bcause you have /root under /home in the pool, but not in the mountpoints
+    15:11 <rlaager> Sure. That feels like it should be in /home. ;)
+    15:14 <twb> So if I skip those empty mounts, all I have to do is set -o mountpoints on the descendants, and I'm A-OK?
+    16:24 <twb> Can a zfs dataset have separate "soft" and "hard" byte limits?
+    16:25 <twb> Right now on ext4, my users can go 20% over their soft quota for up to 1 week, which gives them "wiggle room", e.g. to do a "git repack" when they're over quota
+    16:33 <twb> Is moving a directory tree between two datasets on the same pool and expensive operation?
+    16:37 <CompanionCube> well, cross dataset 'mv' is actually 'cp+rm' if that's what you mean
+    16:53 <twb> yeah I was just thinking that
+    16:53 <twb> there's no way for the userland to do a move that just changes a couple of top-level dirents
+    16:54 <twb> The main use case I'm thinking of is "oh I really want to move /var/foo out of /var and into its own dataset"
