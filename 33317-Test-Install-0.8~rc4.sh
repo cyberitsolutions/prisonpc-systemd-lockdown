@@ -16,7 +16,7 @@ HDDs=(
 SSDs=(
     usb-TOSHIBA_TOSHIBA_USB_DRV_07087BE3E27D2794-0:0  # ZIL SLOG
     usb-TOSHIBA_TOSHIBA_USB_DRV_07087BE3E51DDF83-0:0  # L2ARC
-    usb-Verbatim_STORE_N_GO_070B653669168620-0:0      # EFI ESP drive (on slow USB2 EHCI HBA, not fast USB3 XHCI HBA)
+    usb-Verbatim_STORE_N_GO_070B653669168620-0:0      # EFI ESP disk (on slow USB2 EHCI HBA, not fast USB3 XHCI HBA)
 )
 
 ## NOTE: NOT USING FULL-DISK ENCRYPTION TODAY
@@ -55,55 +55,65 @@ zpool create "${zpool_create_args[@]}"
 # Everybody gets 1GiB soft limit except for conz, who gets 1.2GiB soft limit.
 # UPDATE: fuck it, I'll just let everyone have 2GiB now.
 
-zfs create -o canmount=noauto -o mountpoint=/ omega/OS/root
-zfs mount omega/OS/root
-zfs create -o com.sun:auto-snapshot=false     omega/OS/var/cache
-zfs create -o com.sun:auto-snapshot=false     omega/OS/var/cache/apt/debian
-zfs create -o com.sun:auto-snapshot=false     omega/OS/var/cache/apt/debian-security
-zfs create -o com.sun:auto-snapshot=false     omega/OS/var/tmp
-users=(conz djk jane steve benf neil twb jeremyc russm mattcen mike lachlans alla dcrisp gayle chris ron cjb bfoletta)
-for user in "${users[@]}"
-do
-    zfs create -o mountpoint=/home/"$user"     -o quota=2G  omega/USER/"$user"/home
-    zfs create -o mountpoint=/var/mail/"$user"              omega/USER/"$user"/mail
-done
+zfs create -o canmount=noauto -o mountpoint=/ -o quota=32G omega/ROOT  # uppercase to distinguish / from /root
+zfs mount omega/ROOT
 
-zfs create -o mountpoint=/var/mail/Lists   omega/USER/ALL/mail
-zfs create -o mountpoint=/var/log          omega/DATA/log
-zfs create -o mountpoint=/var/log/journal  omega/DATA/journal
-zfs create                                 omega/var/spool # WHY MAKE THIS AT ALL?
-chmod 1777 /mnt/var/tmp         # FIXME: not documented enough.  Why aren't we doing chmod 0 on all the mountpoints before creating them?
-zfs create                                 omega/srv/business  # User documents (FIXME: use a common root?)
-zfs create                                 omega/srv/clients   # User documents (FIXME: use a common root?)
-zfs create                                 omega/srv/misc      # User documents (FIXME: use a common root?)
-zfs create                                 omega/srv/vcs
-zfs create                                 omega/srv/apt    # NOTE: this is "our stuff"; "cache of upstream stuff" will live in var/cache.
-zfs create                                 omega/srv/cctv
-zfs create                                 omega/srv/rrd      # collectd performance monitoring databases
-zfs create                                 omega/srv/kb       # gitit's /var/www ?  Most of that is /srv/vcs/kb/.git...
-zfs create                                 omega/srv/www      # epoxy's /var/www ?  Hardly even worth it...
+zfs create -o canmount=off                              omega/var
+zfs create -o quota=256G                                omega/var/mail  # per-user mail (& list?) mail
+zfs create -o quota=8G   -o com.sun:auto-snapshot=false omega/var/tmp  # qemu -snapshot & systemd put stuff here
+zfs create -o quota=8G   -o com.sun:auto-snapshot=false omega/var/cache
+zfs create -o quota=256G -o com.sun:auto-snapshot=false omega/var/cache/apt/debian  # debmirror of upstream
+zfs create -o quota=32G  -o com.sun:auto-snapshot=false omega/var/cache/apt/debian-security  # debmirror of upstream
+zfs create -o quota=32G                                 omega/var/log
+zfs create -o quota=8G                                  omega/var/log/journal  # FIXME: does journald actually detect this quota?
 
-# FIXME: create "sensible" quotas on most of these volums
-# FIXME: create per-user zfses for /home, and set each to a 1GB quota, to encourage people to store things in git or the KB?
-# FIXME: create per-user zfses for /var/mail/conz?
+zfs create -o canmount=off                              omega/home
+zfs create -o quota=2G                                  omega/home/conz
+zfs create -o quota=2G                                  omega/home/djk
+zfs create -o quota=2G                                  omega/home/jane
+zfs create -o quota=2G                                  omega/home/steve
+zfs create -o quota=2G                                  omega/home/benf
+zfs create -o quota=2G                                  omega/home/neil
+zfs create -o quota=2G                                  omega/home/twb
+zfs create -o quota=2G                                  omega/home/jeremyc
+zfs create -o quota=2G                                  omega/home/russm
+zfs create -o quota=2G                                  omega/home/mattcen
+zfs create -o quota=2G                                  omega/home/mike
+zfs create -o quota=2G                                  omega/home/lachlans
+zfs create -o quota=2G                                  omega/home/alla
+zfs create -o quota=2G                                  omega/home/dcrisp
+zfs create -o quota=2G                                  omega/home/gayle
+zfs create -o quota=2G                                  omega/home/chris
+zfs create -o quota=2G                                  omega/home/ron
+zfs create -o quota=2G                                  omega/home/cjb
+zfs create -o quota=2G                                  omega/home/bfoletta
 
-# create a zvol for a backup of the entire ESP disk, ~16GB, so it's easy to make a new one.
-zfs create -V 16G                           omega/OS/ESP-DISK
+zfs create -o canmount=off                              omega/srv
+zfs create -o quota=16G                                 omega/srv/business
+zfs create -o quota=16G                                 omega/srv/clients
+zfs create -o quota=1G                                  omega/srv/misc  # mostly in-house IRC logs
+zfs create -o quota=16G                                 omega/srv/vcs
+zfs create -o quota=16G                                 omega/srv/apt  # NOTE: this is "our stuff"; "cache of upstream stuff" will live in var/cache.
+zfs create -o quota=2G                                  omega/srv/cctv
+zfs create -o quota=4G                                  omega/srv/rrd      # collectd performance monitoring databases
+#zfs create                                             omega/srv/kb       # gitit's /var/www ?  Most of that is /srv/vcs/kb/.git...
+zfs create -o quota=1G                                  omega/srv/www      # epoxy's /var/www ?  Hardly even worth it...
 
-# FIXME: create a zvol for alloc VM's OS      /dev/vda (/)
-# FIXME: create a zvol for alloc VM's allocfs /dev/vdb (/srv/www)
-# FIXME: create a zvol for alloc VM's allocdb /dev/vdc (/var/lib/mariadb)
-zfs create -V 2G                            omega/OS/alloc-OS
-zfs create -V 4G                            omega/alloc-DB
-zfs create -V 8G                            omega/alloc-FS
+zfs create -o canmount=off                              omega/ZVOLs
+zfs create -V 16G                           		omega/ZVOLs/ESP-DISK  # backup of entire ESP disk, ~16GB, so it's easy to make a new one
+zfs create -V 2G                            		omega/ZVOLs/alloc-OS  # /dev/vda (/)
+zfs create -V 4G                            		omega/ZVOLs/alloc-DB  # /dev/vdb (/srv/www)
+zfs create -V 8G                            		omega/ZVOLs/alloc-FS  # /dev/vdc (/var/lib/mariadb)
 
-# FIXME: IRC logs go where?  ---> /srv/misc
+# FIXME: not documented enough.  Why aren't we doing chmod 0 on all the mountpoints before creating them?
+chmod 1777 /mnt/var/tmp
+
 # FIXME: separate zfs for (samba's equivalent of) /var/lib/ldap?
 #        The entire database will be <10MB, so do we EVEN CARE?
 # FIXME: separate zfs for /var/backup, which is debian's & our place to drop e.g. sql dumps?
 # FIXME: separate zfs for squid forward proxy cache?  Our plan is to not have squid, so don't care.
 
-# FIXME: quickbooks     omega -wi-ao   3.00g --- IS THIS OBSOLETE?
+# FIXME: quickbooks     omega -wi-ao   3.00g --- IS THIS OBSOLETE? --- UPDATE: conz says yes
 
 
 # FIXME: download refind.img,
@@ -151,7 +161,7 @@ chroot . dpkg-reconfigure locales   # set LANG=en_AU.UTF-8
 chroot . dpkg-reconfigure tzdata    # set TZ=Australia/Melbourne
 >etc/apt/apt.conf.d/10stable         echo "APT::Default-Release \"$r\";"
 
-# FIXME: install ZFS 0.8~rc4 drivers!!!
+# FIXME: install ZFS 0.8~rc4 drivers!!!  (UPDATE: INCLUDING zfs-zed and zfs-dracut and/or zfs-initramfs!)
 ## Do this using file:/ apt repo, not using HTTP to a host that'll go away as part of this upgrade!!!
 ## (ACTUALLY, ideally use Debian's own version of this, not our recompile!)
 ##>$t/etc/apt/sources.list.d/zfs0.8.list  echo 'deb [trusted=yes] http://apt.cyber.com.au/internal-buster/ ./'
@@ -169,15 +179,17 @@ chroot . passwd
 
 # FIXME: write a boot/refind_linux.conf (basically just set ROOT=zfs=pool/root)
 
-# FIXME: swap zvol?
-## FIXME: getconf???
-# The compression algorithm is set to zle because it is the cheapest available algorithm. As this guide recommends ashift=12 (4 kiB blocks on disk), the common case of a 4 kiB page size means
-# that no compression algorithm can reduce I/O. The exception is all-zero pages, which are dropped by ZFS; but some form of compression has to be enabled to get this behavior.
+# The compression algorithm is set to zle because it is the cheapest
+# available algorithm. As this guide recommends ashift=12 (4 kiB
+# blocks on disk), the common case of a 4 kiB page size means that no
+# compression algorithm can reduce I/O. The exception is all-zero
+# pages, which are dropped by ZFS; but SOME form of compression has to
+# be enabled to get this behavior.  Hence, zle.
 zfs create -V 4G -b $(getconf PAGESIZE) -o compression=zle \
       -o logbias=throughput -o sync=always \
       -o primarycache=metadata -o secondarycache=none \
-      -o com.sun:auto-snapshot=false omega/swap
-mkswap -f /dev/zvol/omega/swap
+      -o com.sun:auto-snapshot=false omega/SWAP
+mkswap -f /dev/zvol/omega/SWAP
 ## ADD SWAP TO FSTAB?  WHAT ABOUT THE WHOLE "AUTO DISCOVER MOUNTPOINTS" STUFF THAT SYSTEMD WAS PROMOTING FOR SINGLE-OS COMPUTERS?  SPECIAL UUIDS OR SOMETHING?
 # The RESUME=none is necessary to disable resuming from hibernation. This does not work, as the zvol is not present (because the pool has not yet been imported) at the time the resume script
 # runs. If it is not disabled, the boot process hangs for 30 seconds waiting for the swap zvol to appear.
