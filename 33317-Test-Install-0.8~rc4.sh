@@ -51,34 +51,33 @@ zpool create "${zpool_create_args[@]}"
 ## NOTE I think the "ROOT" prefix is trying to separate "the" OS from all the "user data" zfses.
 ## So why aren't all the "user data" zfses created under a common tree like omega/user-data/var/log ?
 ## This whole thing seems weird and future-proofing for a future that won't happen in my lifetime.
-# zfs create -o canmount=off    -o mountpoint=none  omega/ROOT
-# zfs create -o canmount=noauto -o mountpoint=/     omega/ROOT/root
-# zfs create -o canmount=noauto -o mountpoint=/boot omega/ROOT/boot
-# zfs mount omega/ROOT/root
-# zfs mount omega/ROOT/boot
 
-zfs create -o canmount=noauto -o mountpoint=/     omega/root
-zfs mount omega/root
-zfs create                                 omega/home
-zfs create -o mountpoint=/root             omega/home/root # WEIRD!
-zfs create -o canmount=off                 omega/var       # WHY MAKE THESE AT ALL??
-zfs create                                 omega/var/mail
-zfs create                                 omega/var/mail/Lists # FIXME: ???
-zfs create -o canmount=off                 omega/var/lib   # WHY MAKE THIS AT ALL??
-zfs create                                 omega/var/log
-#zfs create                                 omega/var/log/journal   # MAKE THIS SEPARATE?
+# Everybody gets 1GiB soft limit except for conz, who gets 1.2GiB soft limit.
+# UPDATE: fuck it, I'll just let everyone have 2GiB now.
+
+zfs create -o canmount=noauto -o mountpoint=/ omega/OS/root
+zfs mount omega/OS/root
+zfs create -o com.sun:auto-snapshot=false     omega/OS/var/cache
+zfs create -o com.sun:auto-snapshot=false     omega/OS/var/cache/apt/debian
+zfs create -o com.sun:auto-snapshot=false     omega/OS/var/cache/apt/debian-security
+zfs create -o com.sun:auto-snapshot=false     omega/OS/var/tmp
+users=(conz djk jane steve benf neil twb jeremyc russm mattcen mike lachlans alla dcrisp gayle chris ron cjb bfoletta)
+for user in "${users[@]}"
+do
+    zfs create -o mountpoint=/home/"$user"     -o quota=2G  omega/USER/"$user"/home
+    zfs create -o mountpoint=/var/mail/"$user"              omega/USER/"$user"/mail
+done
+
+zfs create -o mountpoint=/var/mail/Lists   omega/USER/ALL/mail
+zfs create -o mountpoint=/var/log          omega/DATA/log
+zfs create -o mountpoint=/var/log/journal  omega/DATA/journal
 zfs create                                 omega/var/spool # WHY MAKE THIS AT ALL?
-zfs create -o com.sun:auto-snapshot=false  omega/var/cache
-zfs create -o com.sun:auto-snapshot=false  omega/var/cache/apt/debian
-zfs create -o com.sun:auto-snapshot=false  omega/var/cache/apt/debian-security
-zfs create -o com.sun:auto-snapshot=false  omega/var/tmp
 chmod 1777 /mnt/var/tmp         # FIXME: not documented enough.  Why aren't we doing chmod 0 on all the mountpoints before creating them?
-zfs create -o canmount=off                 omega/srv       # WHY MAKE THESE AT ALL??
 zfs create                                 omega/srv/business  # User documents (FIXME: use a common root?)
 zfs create                                 omega/srv/clients   # User documents (FIXME: use a common root?)
 zfs create                                 omega/srv/misc      # User documents (FIXME: use a common root?)
 zfs create                                 omega/srv/vcs
-zfs create                                 omega/srv/apt    # FIXME: split this into "our stuff" and "cache of upstream stuff"
+zfs create                                 omega/srv/apt    # NOTE: this is "our stuff"; "cache of upstream stuff" will live in var/cache.
 zfs create                                 omega/srv/cctv
 zfs create                                 omega/srv/rrd      # collectd performance monitoring databases
 zfs create                                 omega/srv/kb       # gitit's /var/www ?  Most of that is /srv/vcs/kb/.git...
@@ -89,12 +88,12 @@ zfs create                                 omega/srv/www      # epoxy's /var/www
 # FIXME: create per-user zfses for /var/mail/conz?
 
 # create a zvol for a backup of the entire ESP disk, ~16GB, so it's easy to make a new one.
-zfs create -V 16G                           omega/ESP-DISK
+zfs create -V 16G                           omega/OS/ESP-DISK
 
 # FIXME: create a zvol for alloc VM's OS      /dev/vda (/)
 # FIXME: create a zvol for alloc VM's allocfs /dev/vdb (/srv/www)
 # FIXME: create a zvol for alloc VM's allocdb /dev/vdc (/var/lib/mariadb)
-zfs create -V 2G                            omega/alloc-OS
+zfs create -V 2G                            omega/OS/alloc-OS
 zfs create -V 4G                            omega/alloc-DB
 zfs create -V 8G                            omega/alloc-FS
 
