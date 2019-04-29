@@ -257,6 +257,58 @@ How do I grow the refind ESP enough to put kernels in there?
 * UPDATE: apt install fatresize ???
 
 
+How do we lay out the datasets in the ZFS pool?
+----------------------------------------------------------------------
+* Why do we have -o canmount=no "useless" datasets?
+  It is just to avoid specifying -o mountpoint=X?
+
+  Mostly, but russm says this also is definitely the recommended way Solaris ZFS worked when ZFS was new.
+
+  Therefore twb convinced to just carry around these "extra" "useless" intermediary datasets.
+
+* Is it sensible to group datasets "logically" instead of "as
+  mounted"?  e.g. ::
+
+    OS/root,
+    DATA/USER/twb/home (/home/twb),
+    DATA/USER/twb/mail (/var/mail/twb),
+    DATA/USER/ALL/mail (/var/mail/Lists),
+    DATA/USER/ALL/biz (/srv/biz)
+
+  russm asks: what does that GAIN us?
+
+  twb says: we can say things like "What's the growth on twb's data?" and "Do another backup, but ONLY of twb's data".
+
+  russm says: but OTOH it's more confusing (compared to pool structure matching mount structure),
+
+  Therefore twb convinced to make the pool/dataset structure match the mountpoint structure.
+
+  * PS: in addition to pool-structure-matches-mount and
+    pool-structure-is-logically-grouped, we also considered
+    pool-structure-is-flat, like we do for LVM (because we have to
+    for LVM) e.g. ::
+
+        root
+        home-twb  (/home/twb)
+        var-spool-cron (/var/spool/cron)
+
+  * PS: since this is a singleton server, we CAN just move things from
+    their traditional locations in many cases, e.g. /var/mail can move
+    to /srv/mail.  Is this sensible, or a waste of time?
+
+    russm says overall waste of time;
+    twb doesn't really care.
+
+* Also, should the ZVOLs (VM disks, plus the ESP backup) go at the root of the pool, or what?
+
+  russm says: put them under pool/ZVOLs, because by default zpool/zfs
+  commands don't show the zvols, but the "ZVOLs" dataset will still
+  show up, basically as a reminder to look at zvols as well.
+
+  We might have called it "VMs" instead of "ZVOLs", but there's on
+  (ESP backup) that isn't a VM, so... meh.
+
+
 
 References
 ==========
@@ -269,6 +321,11 @@ References
 * https://github.com/hn/debian-buster-zfs-root
 * https://raw.githubusercontent.com/hn/debian-buster-zfs-root/master/debian-buster-zfs-root.sh
 * http://open-zfs.org/wiki/Feature_Flags
+* https://manpages.debian.org/buster/manpages/hier.7.en.html
+* https://manpages.debian.org/buster/dracut-core/dracut.8.en.html#SEE_ALSO
+* https://manpages.debian.org/buster/zfsutils-linux/zfs.8.en.html
+* https://manpages.debian.org/buster/zfsutils-linux/zpool.8.en.html
+* https://systemd.io/BOOT_LOADER_SPECIFICATION   # UPDATE: not really helpful.
 
   I have confirmed the EFIFS 1.3 uses grub-core's zfs.c almost at HEAD.
   This is the commit of grub that efifs is using::
@@ -777,8 +834,6 @@ IRC Logs
     13:56 !!! irc.freenode.net: connection broken by remote peer (closed)
     > The other advantage of all first-party hardware is that 14:01 /join
       #zfsonlinux
-    14:01 *** TOPIC ZFS on Linux - http://zfsonlinux.org/ - Latest release: 0.7.13 (beta 0.8.0-rc4) - FAQ: https://github.com/zfsonlinux/zfs/wiki/faq - LiveCD: http://list.zfsonlinux.org/zfs-iso/ - Offtopic (non-computer stuff) should use #zfsonlinux-social - Paste using nopaste - Native encryption is not production ready, see #6224 (rlaager!~rlaager@grape.coderich.net on Thu Apr 18 11:29:11 2019)
-    14:01 *** NAMES @ChanServ +mahrens +ryao _KaszpiR_ aarwine adisbladis aegiap agris aither Albori alexxy AllanJude amir amospalla andjjj23 AndrewG AndyCap apekatten APTX_ apus asjackson b636bc7ca bart- Baughn bdha beardface beowuff betawaffle bglod_ blassin Blub\0 bobe bol breitenj brethil bs338 BtbN buu c3-Win c3r1c3-Lin captain42 CarlGel catalase cbmuser Ceryn cirdan clete2 clever cliluw CoJaBo Comnenus CompanionCube copec cpt-oblivious Crocodillian ctrlbreak_MAD cyberbootje cyphase cyteen Dagger dave_uy debfx deepy DeHackEd delx devster Dewin DHE djdunn djs_ donhw Dragnslcr dsockwell dustinm DzAirmaX eab echelog-3 echeveria edef eightyeight Ekho elvishjerricco endre` ephemer0l_ ericnoan erska esotericnonsense euank ezbp f_g feliks FinalX FireSnake fishfox__ fling fs2 Fubarovic Fusl fwaggle gardar gbkersey gchristensen geaaru ghfields ghormoon ghoti gila GrayShade green-- guardian Gugge gurg gurki gyakovlev haasn Harekiet heinrich5991 hexa- hmw hondza HotSwap hsp hyper_ch Hypfer ih8wndz iklio INeedAHandle infecticide infernix IonTau irdr_ iTeV ius izibi JanC jasonrm jasonwc javi404 jidar jkux jmcgnh JMoVS JPT jtara JulietDeltaGolf JWU42 k-man kahiru kalasmannen kegwin kerberizer kimmyk King_InuYasha kini kittysh Klox krupke L0j1k Lalufu lblume leah2 LeoTh3o leper` libsci likewhoa logan- Logos01 lord4163 lpsmith lundman lurkless lynchc m3thos madwizard maestronolte manfromafar marble_visions MarisaKi1 mavhq mf migy__ MilkmanDan mishiranu misuto mlatin mmlb MooingLemur morphin mquin mybalzitch mz` nahamu_ neffi nicoulaj noone nwf oblikoamorale optiz0r p_l pcd percY- perfinion phantomcircuit phibs Phil-Work Phil21 pink_mist piti Pjerky pmooney PMT poots pR0Ps prawn prologic prometheanfire ps-auxw pts0 puxavida radkos raoulb ReimuHakurei rich0 riddle rj1 rlaager rnydam robinsmidsrod Ryushin sarnold sauravg scar scastano Selavi ShaRose Shinigami-Sama siruf Sketch skomorokh_ snehring soltys sphalerite sphrak sponix Stern stiell stochastix stoiko storrgie str4nd STRML SuperSeriousCat sztanpet Tashtari tds teardown TheJollyRoger theracermaster tilpner timeless timewalker TimWolla tlacatlc6 tmiw trisk troyt tsp tuxmontero twb uebera|| ulope user1234567 user_51 varesa veegee_ veremitz vertigo voldial vrakfall__ wak-work Walex waz0wski whyz woffs wolfire wolke xedniv Xeha xlued xmw XpineX xqsl yangm97 yawkat yoink yomisei Yukikaze z1mme zapotah zfs-bot Zgrokl zoredache |woody|
     14:01 *** services. 328 #zfsonlinux http://zfsonlinux.org
     14:01 <pts0> sgdisk     -n2:1M:+512M    ok from 1M to 512m but then this just overwrites it sgdisk     -n3:0:+512M
     14:02 <pts0> the third one overwrites the second one
@@ -1191,10 +1246,7 @@ IRC Logs
     15:39 <Xogium> I've been trying to do the best of both worlds with buildroot in this case
     15:43 <twb> Xogium: without that, how does systemd (running in the initrd) know whether the initrd is the "final system", or if it's destined to mount /root and switch_root?
     15:44 <twb> Because you might just be packing the final rootfs into the initrd and then stopping, e.g. for a smartbulb firmware
-    15:46 *** [diablo] JOIN
     15:46 <Xogium> I'm not sure that's what I've been trying to find out, how does it determine to be in an initramfs at all… boucman_work found that it apparently just check for /etc/initrd-release, so I'm guessing that I have a bunch of stuff that I'd need to take out of my initramfs or something, because it doesn't react at all how I expect it to
-    15:48 *** oiaohm QUIT Read error: Connection reset by peer
-    15:48 *** oiaohm JOIN
     15:52 <Xogium> hmm
     15:53 <Xogium> okay so by examining the archlinux initramfs they just pack a lot less systemd stuff than me
     15:54 <Xogium> but they've made the default target be initrd.target in the first place, so I could also just do the same and it would work, my default target is multi-user.target because that's how buildroot makes it by default
@@ -1442,3 +1494,29 @@ IRC Logs
     16:53 <twb> yeah I was just thinking that
     16:53 <twb> there's no way for the userland to do a move that just changes a couple of top-level dirents
     16:54 <twb> The main use case I'm thinking of is "oh I really want to move /var/foo out of /var and into its own dataset"
+
+2019-04-29 #mailman::
+
+    13:34 <twb> Does mailman typically store its mail under /var/mail/<listname>, or what?
+    13:34 <twb> (It's been 10 years since I did any mailman and I have literally no memory of it)
+    13:37 <twb> (What I have currently is just each LDAP group gets a mailbox that dovecot exposes as a separate shared namespace, because mailman 2 insisted on installing an httpd on my mail server.  IIUC mailman 3 lets me have a mail-only mailman and never install the passwords-and-CGI web UI)
+
+2019-04-29 #zfsonlinux::
+
+    13:16 <twb> In the olden days under solaris, you could only recv a replication snapshot to the root of a pool.  Is that still the case?
+    13:16 <PMT> No.
+    13:17 <twb> Cool.
+    13:17 <PMT> And when was that the case?
+    13:17 <twb> $coworker's memory from opensolaris-era ZFS
+    13:17 <twb> My use case is basically I have 1 big server and 1 little server onsite, and I want to replicate all of <little server>'s pool onto <big server>, and then later replicate all of <big server> (including the copy of <little server>) to an offsite DR backup
+    13:19 <PMT> -R will work on non-root datasets. I don't actually recall when that was the case, though I'm sure commit logs from illumos do.
+    13:23 <twb> So I can do like ssh little zfs send -I @yesterday -R pool@today | ssh big zfs recv pool/little-backup/
+    13:23 <twb> Maybe the "problem" was when recv gets -F...
+    13:29 <PMT> twb: it'd be just -I, -R is implicit with capital I
+    13:29 <twb> okey dokey
+    13:29 <PMT> No, wait, I'm wrong, -I just means all snapshots between the two, -RI would be a replication of [...]
+    13:29 <twb> It's been a while since I've done this stuff and the manpage is a bit overwhelming
+    13:30 <PMT> Sorry, not enough caffeine, presumably.
+    13:39 <PMT> (It's okay, I'm reasonably confident someone would have called out that I was objectively Wrong if I hadn't noticed. Accuracy by eventual consensus. :) )
+    13:40 <twb> Let me just check who's likely to be awake... http://ix.io/1HvO
+    13:41 <twb> Bad time of day for help from europeans or americans
