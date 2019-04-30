@@ -1571,6 +1571,27 @@ IRC Logs
     19:40 <twb> it would need a patch like this (from initramfs-tools's mkinitramfs script): http://ix.io/1HDd/bash http://ix.io/1HDe/bash
     20:44 <twb> is dracut smart enough to see add_dracutmodules+=" busybox " omit_dracutmodules+=" bash dash " and then later see another module depending on bash, and go "hey, this won't work!"
     20:44 <twb> Or will it just build it and break the next boot?
+    20:55 <Mrfai> twb: the main dracut script dracut.sh is a bash script, so you always need bash in the initrd.
+    20:56 <twb> dracut.sh *builds* the ramdisk
+    20:56 <twb> it shouldn't affect what runs *inside* the ramdisk, which should be mostly systemd
+    20:56 <twb> (right?)
+    20:56 <Mrfai> In dracut there's no break=bottom. See dracut.cmdline for the vaild options: rd.break={cmdline|pre-udev|pre-trigger|initqueue|pre-mount|mount|pre-pivot|cleanup}
+    20:56 <twb> ah rd.break=pre-pivot should be close to break=bottom
+    21:00 <Mrfai> yes, you are right. No bash scripts are executed inside the initrd.
+    21:02 <twb> Mrfai: /etc/shutdown inside the ramdisk contains bashisms, though, and dracut seems to be bin/sh -> bash inside my ramdisk.  I'm not sure if that's just traditional RH laziness.
+    21:03 <Mrfai> Do you mean dpkg triggers for dracut? Currently there's one trigger. which IMO is not perfect. But it's not easy do detect when to rebuild the initrd, after some packages on the host have changed.
+    21:04 <twb> Mrfai: the one that makes me especially cranky is (AFAICT) a dracut rebuild isn't triggered by installing dracut-config-generic
+    21:05 <twb> Which seems like the most important case-  "I'm about to transplant my disks to a new computer, so make the ramdisk portable"
+    21:06 <Mrfai> I'm not a trigger expert. But I would like to see better trigger support in dracut. Do you know how to write such a trigger?
+    21:06 <twb> I know vaguely
+    21:07 <twb> AIUI basically you say "dear dpkg, if any file under /etc/foo changes, tell me".  And what dpkg actually does is run your postinst with some options
+    21:08 <twb> I have a config package that removes "weekly" and "yearly" words from /etc/logrotate.d files, so I register my own trigger for that tree.  In my case, it's idempotent, so I don't actually bother to check the args properly
+    21:08 <twb> In your case I think you'd register a trigger for something like /usr/lib/dracut/modules.d/, but I'm definitely not an expert
+    21:09 <Mrfai> For dracut a trigger that watches /etc/dracut.conf.d and /etc/dracut.conf should be the most important.
+    21:10 <twb> I think /etc/dracut.conf itself would be moot, because only you yourself manage that (apart, possibly, from diversions)
+    21:10 <twb> but I agree re /etc/dracut.conf.d/
+    21:12 <twb> It's about 2 hours past my bedtime, so I have to go.  I should be back tomorrow, though.  If I forget and you want to talk packaging, I'm always in #debian-au on OFTC.
+    21:12 <twb> Thanks for your help so far
 
 2019-04-30 #debian-au::
 
