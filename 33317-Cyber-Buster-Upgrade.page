@@ -64,6 +64,9 @@ Plan
   * ZFS on Linux (ZOL) for archive/RAID
   * Samba AD (accounts/LDAP), SMB3.2 file sharing
   * postfix/dovecot/(mailman3?)
+
+    * use dovecot LDA (and sieve); BAN PROCMAIL.
+
   * strong apparmor/systemd lockdown, NOT containers/VMs
   * icinga3 (replaces nagios), collectd/graphite
 
@@ -88,6 +91,13 @@ Plan
   * apt mirror (or NBN?)
 
   * start actually doing IPv6 and nftables, not just IPv4 and iptables
+
+  * discourage/ban people writing /var/spool/cron/crontabs;
+    make them write ~/.config/systemd/ timers, so that
+    they're version-controlled better.
+
+    Question: do they run when the user isn't logged in?
+    e.g. overnight alloc submission job?
 
 
 How do we boot ZFS?
@@ -312,6 +322,7 @@ How do we lay out the datasets in the ZFS pool?
 
 References
 ==========
+* login.cyber.com.au:/srv/vcs/flash-kernel-efi.git
 * `lshw-omega-understudy.html`_
 * https://www.supermicro.com/products/motherboard/Xeon/C600/X9SRi-F.cfm
 * https://github.com/zfsonlinux/zfs/wiki/Debian-Buster-Root-on-ZFS  (Using ZFS 0.7)
@@ -1520,3 +1531,225 @@ IRC Logs
     13:39 <PMT> (It's okay, I'm reasonably confident someone would have called out that I was objectively Wrong if I hadn't noticed. Accuracy by eventual consensus. :) )
     13:40 <twb> Let me just check who's likely to be awake... http://ix.io/1HvO
     13:41 <twb> Bad time of day for help from europeans or americans
+
+2019-04-30 #refind::
+
+    10:47 <twb> I notice that https://sourceforge.net/projects/refind/files/0.11.4/refind-flashdrive-0.11.4.zip/download  uses FAT12 instead of FAT32.  Is that intentional, or is that just an artefact of running "mkfs.vfat" without an -F32 on a small partition?
+    11:45 <Hello71> perhaps it is more portable
+    11:47 <Hello71> is it actually causing a problem for you
+    11:50 <twb> fatresize and gparted (both using libparted) seem to be getting confused
+    11:50 <twb> It's not clear to me how much this is the 12-bit-ness
+    11:51 <twb> It's also not clear to me if UEFI requires FAT32, or FAT12/FAT16.  The Wikipedia wording makes it sound like it has to be FAT32 on internal hard disks, but has to be FAT12/FAT16 on USB hard disks.  Which is bloody stupid, but that's par for the course for UEFI specs.
+
+2019-04-30 #dracut::
+
+    12:50 <twb> If this is the dev channel, is there a user channel?
+    12:52 <twb> I'm migrating from initramfs-tools to dracut on Debian 10 Buster, purely so I have systemd in the ramdisk, purely so my root-on-ZFS mount generators work nicer.  I want to ask some dumb questions like: does intel-microcode Just Work with dracut on Debian 10?  What's the equivalent of break=bottom?
+    12:59 <twb> (By break=bottom I mean that it should mount the rootfs, but just before switch_root, drop me into a busybox ash rescue shell.  Exiting the shell would resume the boot process.)
+    12:59 <twb> Also, on Debian 10, does dracut switch *back* to the initrd during shutdown, so that systemd's journal crap won't prevent my ZFS pool from being cleanly torn down?
+    13:02 <twb> "rd.shell" seems to only give a shell iff the rootfs fails to mount; I haven't found one that ALWAYS gives you a shell
+    13:34 <twb> Hrm, mount -t overlay support is Debian-specific
+    14:54 <twb> I can see early_microcode defaults to yes, then it looks for AMD and/or Intel microcode in (by default) /lib/firmware/updates:/lib/firmware:/lib/firmware/$(uname -r)
+    17:32 <twb> Why is dracut including less in the ramdisk?  bash I can sort of understand, because no busybox, but... less?
+    17:32 <twb> And ls, which is just gross.  If RHEL is still using ls to enumerate files in sysconfig, I shall be very cross.
+    17:35 <twb> In the dracut root /shutdown is declared as a #!/bin/sh, but it includes bashisms, so presumably it's nontrivial to just swap in busybox for all the GNU stuff and save 5MB
+    18:15 <Mrfai> twb: I'm the Debian maintainer of dracut. I will look into your questions later today.
+    18:15 <twb> Thanks
+    18:15 <twb> Feel free to ignore any of my comments that were too grumpy :-)
+    18:55 <twb> Should I worry that dracut is saying things like "dracut: zfsexpandknowledge: pool omega has device /dev/disk/by-id/ata-MB0500EBZQA_Z1M0FBG7-part1 (which resolves to /dev/sdb1)"
+    18:55 <twb> Because those /dev/sdb1 resolutions aren't static and might not be the same next boot
+    18:56 <twb> Also the root= looks pretty wrong: dracut: Stored kernel commandline: root=/dev/block/ rootfstype=zfs rootflags=rw,relatime,xattr,posixacl
+    18:57 <twb> I'm in a live environment trying to set up the ramdisk for the first regular boot later on; it might be auto-guessing wrong because it's third-part "zfs-dracut", or it might be guessing wrong because I'm in a live environment
+    19:21 <twb> Aha, this is good!  I saw debbugs comments that dracut triggers weren't A Thing yet, but it seems like in buster, they are.  Installing busybox caused dracut to rebuild.
+    19:24 <twb> Does dracut understand $SOURCE_DATE_EPOCH (https://reproducible-builds.org) ?  Setting it doesn't seem to affect the timestamps as reported by lsinitrd.
+    19:25 <twb> I think that must be a bug in lsinitrd, because the actual checksum doesn't change if I rerun dracut with SOURCE_DATE_EPOCH set
+    19:26 <twb> except.. changing SOURCE_DATE_EPOCH doesn't then change the checksum, so... >confused<
+    19:27 <twb> oh, oh, I see.  dracut without arguments writes to the wrong file (initramfs-4.19.0-4-amd64.img not initrd.img-4.19.0-4-amd64)
+    19:28 <twb> Yeah, looking at initramfs-4.19.0-4-amd64.img, it clearly isn't doing the Right Thing with SOURCE_DATE_EPOCH
+    19:32 <twb> apt install amd64-microcode intel-microcode did NOT trigger the dracut trigger :-(
+    19:39 <twb> Even using datefudge @$SOURCE_DATE_EPOCH doesn't Just Work, because the mtimes are initialized by the kernel
+    19:40 <twb> it would need a patch like this (from initramfs-tools's mkinitramfs script): http://ix.io/1HDd/bash http://ix.io/1HDe/bash
+    20:44 <twb> is dracut smart enough to see add_dracutmodules+=" busybox " omit_dracutmodules+=" bash dash " and then later see another module depending on bash, and go "hey, this won't work!"
+    20:44 <twb> Or will it just build it and break the next boot?
+
+2019-04-30 #debian-au::
+
+    13:36 <twb> pabs: hey, you seem to know all the debian ML discussions.  Do you know whether there's a general plan to switch Debian to systemd and/or dracut in the ramdisk?
+    13:43 <pabs> dracut BoFs have happened several times at recent DebConfs IIRC. not sure when/if that will happen though
+    13:45 <twb> The driver for me is that, basically, upstream systemd doesn't support systems with non-systemd ramdisks
+    13:45 <twb> Which mostly manifests in obscure edge cases, such as:
+    13:45 <twb> 1. multi-disk btrfs doesn't work properly with systemd is not the ramdisk; systemd tries to mount ALL the nodes, not ANY of the nodes
+    13:46 <twb> 2. journald keeps /var/log/journal open, which prevents the root (and its underlying disks) from being torn down cleanly during shutdown, unless the OS switch_root's *BACK* into the ramdisk during shutdown
+    13:46 <twb> These were problems I encountered as at systemd v215 in Jessie, so *might* be moot nowadays
+    13:53 <rjsalts> DKIM works too for being able to validate From: header is legit
+    13:54 <pabs> twb: not sure about those issues, I suggest testing buster (in a VM perhaps) and then bringing it up on debian-devel
+    13:56 <twb> Well, right now my attitude is basically "fuck it, let's try dracut"
+    13:56 <twb> I don't normally use it because 1. it pulls in 50MB of perl Depends and 100MB of cryptsetup/luks/mdadm/dmraid/lvm2 Recommends; and 2. it doesn't do boot=live OOTB
+    13:56 <twb> Although I just discovered a Debian-specific patch which does 50% of boot=live as "rootovl"
+    13:57 <rjsalts> I don't think unstable is using dracut
+    13:58 <rjsalts> but I don't think I have problems with root unmounting cleanly on shutdown
+    13:58 <rjsalts> not sure on the btrfs, as I'm using xfs as my fs of choice
+    14:02 <twb> rjsalts: I'm not suggesting dracut is the default _yet_
+    14:02 <twb> I'm asking if that's a goal debian has
+    14:05 <pabs> I believe the dracut maintainer wants it to be the default yes
+    14:05 <pabs> not sure about the kernel team
+    14:12 <rjsalts> I was getting suggestions to move to plymouth last time I ran apt update on unstable, being dragged in by recommends
+
+    14:36 <twb> I hate that dracut is one big bash script, just like initramfs-tools
+    14:36 <twb> Like, surely by now you can use python or perl
+    14:38 <twb> It's full of shit like if ! [[ ${KERNEL_INSTALL_MACHINE_ID-x} ]]; then exit 0; fi
+    14:38 <twb> Like... do you even?
+    14:39 <twb> [[ $dracut_rescue_image != "yes" ]] && exit 0   implies they're running it with error handling disabled
+    14:39 <twb> So if anything goes wrong, you just ignore it, instead of stopping and asking the user to fix you
+    14:39 <twb> lulz they're adding the exit codes together, so it'll wrap around
+    14:42 <twb> lulz dracut.css isn't a CSS file
+    14:42 <twb> dracut.asc appears to be asciidoc, rather than a GPG signature
+    14:43 <twb> all the bash scripts in dracut are setting LANG=C instead of LC_ALL=C, so if e.g. I have LANG=en_AU.UTF-8 LC_CTYPE=fr_FR.UTF-8, it won't remove the latter
+    14:45 <twb> Why the fuck does dracut have its own logfile
+    14:57 <twb> https://bugs.debian.org/753752  grrrr
+    15:08 <twb> # This is kinda legacy -- eventually it should go away.
+    15:08 <twb> case $dracutmodules in ""|auto) dracutmodules="all" ;; esac
+    15:08 <twb> grrrrrr
+    15:08 <twb> (FTR, initramfs-tools is just as bad)
+    15:08 <twb> literally the only reason I haven't just replaced initramfs-tools in debian is I don't want to have an argument with all the people RELYING on its bugs
+    15:17 <rjsalts> initramfs-tools is debian native, yes?
+    15:17 <twb> yes
+    15:17 <twb> It's really really old
+    15:17 <twb> busybox was also written by debian for initramfs
+    15:18 <rjsalts> yeah, I think I remember the transition to it in etch
+    15:19 <rjsalts> from some even more kludgy collection of shell scripts
+    15:20 <twb> as a trivial example, in initramfs-tools cryptsetup scripts, you get 3 goes to get your passphrase right.  After that, it just hangs.
+    15:21 <twb> like, enough that ctrl+alt+del even won't help
+    15:21 <rjsalts> why 3?
+    15:21 <twb> because that's how many were coded into the script
+    15:21 <rjsalts> not a while loop?
+    15:22 <twb> correct
+    15:22 <twb> presumably because they didn't want to trigger an infinite busy-loop if /dev/tty was wonky
+    15:23 <rjsalts> couldn't you put a test for that inside the while with a continue or whatever?
+    15:24 <rjsalts> can you run systemd itself in the initramfs?
+    15:24 <twb> rjsalts: initramfs-tools doesn't support systemd init
+    15:24 <twb> rjsalts: dracut ONLY supports that, which is why it's what I'm trying to use today
+    15:25 <rjsalts> is a simpler system than dracut that worked with systemd possible?
+    15:26 <twb> it's theoretically possible
+    15:26 <twb> I don't know if anyone has done it.
+    15:26 <twb> tiny-initramfs exists but it is using its own C program a la RH's old pre-systemd "nash" ramdisk, where e.g. the NFS syscalls and baked into the stand-alone /init program
+    15:27 <twb> Actually, I know someone in #systemd who is doing a non-dracut systemd ramdisk, but they're doing very Unique Snowflake stuff
+    15:27 <rjsalts> busybox does that on initramfs-tools initrds?
+    15:27 <twb> rjsalts: not to the same extent
+    15:28 <twb> busybox uses klibc-utils for nfsmount and ipconfig
+    15:28 <twb> And when busybox ash is told to e.g. run "ping", it'll look for /sbin/ping, and run that as a separate process, even if it's a symlink back to busybox.
+    15:28 <twb> That's configurable in the busybox compile-time config, but Debian has told it to behave that way
+    15:28 <twb> CONFIG_PREFER_APPLETS or something
+    15:29 <twb> CONFIG_FEATURE_PREFER_APPLETS=y
+    15:32 <twb> The main things needed for systemd in the ramdisk is for default.target to be a symlink to initrd.target (not multi-user.target), and for /etc/machine-id and friends to be copied in
+    15:32 <twb> The main things needed for systemd in the ramdisk is for default.target to be a symlink to initrd.target (not multi-user.target), and for /etc/machine-id and friends to be copied in
+    16:29 <twb> rjsalts: oh btw re plymouth, at least some systems are incapable of correctly prompting for recovery from a fsck problem, unless plymouth is in the ramdisk
+    16:30 <twb> rjsalts: even if it's only plymouth's pseudo-text version
+    16:30 <twb> I *think* I saw that on Ubuntu, but I'm not too sure.
+    16:44 <themill> «scrub /dev/sda3» nom nom
+    17:30 <twb> dracut includes bash in the ramdisk
+    17:30 <twb> SAVAGES
+    17:30 <twb> And *not* busybox at all, which is bullshit, because it's super handy for recovery
+    17:30 <twb>   lrwxrwxrwx 1 root root    4 2019-04-29 19:26 loginctl -> true
+    17:30 <twb> lulz
+    17:33 <twb> This is dumb, they're including less and GNU cp, mv, ls, sed, &c
+    17:33 <twb> 6MB instead of 1MB
+
+    19:01 <twb> haha origin is <NULL> on my bodge-arse repos
+    19:29 <twb> dracut doesn't understand SOURCE_DATE_EPOCH
+    19:29 <twb> so e.g. a Debian Live ISO built using dracut instead of initramfs-tools will always be irreproducible
+
+2019-04-30 #zfsonlinux::
+
+    15:25 <twb> So when I screw up making a pool, I want to tear down the existing pool before making a new one.
+    15:25 <twb> "zpool export omega" and "zpool export -f omega" both fail with "umount: /mnt: target is busy.  cannot unmount '/mnt': umount failed"
+    15:25 <twb> lsof says it's not in use.
+    15:26 <twb> "zfs umount -a" exits happily.  "umount -a -t zfs" gives the same error as "zpool export"
+    15:31 <twb> Also when I try "wipefs -a /dev/sda", I get "wipefs: error: /dev/sda: probing initialization failed: Device or resource busy"
+    16:10 <twb> OK, after a reboot, the pool is auto-imported, but I can "zpool export" it at least
+    16:10 <twb> And then I can wipefs the underlying drives
+
+    18:41 <twb> Oh boy, I forgot how slow dpkg is when you have to wait for an actual disk
+    18:42 <twb> (I usually use dpkg with --force-unsafe-io, on tmpfses, so the fsync spam is nopped away)
+    18:46 <nils_> yeah it's very slow especially with ZFS or on spinning rust, I was thinking of maybe doing a snapshot before and after and then disabling fsync() with force-unsafe-io.
+    18:47 <twb> The case that was screwing me before (on ext4) was collecting spamming randomized writes to one LV, and dpkg installing something to another LV on the same disks
+    18:48 <twb> The syncs at ~200ms intervals prevents the kernel from linearizing the RRD writes for more than that, so the entire OS crashed to a halt and had to be hard rebooted
+    18:49 <twb> I "solved" that by telling collectd to do its own RRD buffering in RAM for up to 30min, and to stagged the individual flushes to disk for good measure
+    18:50 <twb> Which just meant that if you look at the pretty performance graphs, they're up to 30 minutes behind real-time
+    19:01 <rlaager> twb: You might want to set sync=disabled while running dpkg.
+    19:01 <twb> is that per dataset, or per pool?  /me checks manpage
+    19:03 <twb> I mean, to be fair, dpkg is doing it out of entirely reasonable paranoia.  dpkg doesn't know when the proprietary HDD controller firmware is going to wig out
+    19:04 <rlaager> The history on this is long and complicated. See at least this, and everything it links to, including the references to the whole ext4 file renaming thing: https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=605384
+    19:04 <zfs-bot> [ #605384 - d-i should use dpkg --force-unsafe-io to optimize installation time - Debian Bug report logs ] - bugs.debian.org
+    19:05 <rlaager> The sync= property is per dataset, but of course is inherited like everything else, so you could set it on the pool and just let it inherit down through everything.
+    19:06 <rlaager> I haven't tested an install both ways, so I'm not sure how much it matters. I'm assuming that debootstrap does NOT use dpkg --force-unsafe-io, but I don't actually know. I could use eatmydata in the HOWTO, but that name is scary, and it's another dependency.
+    19:07 <rlaager> I'd like to set sync=disabled in the HOWTO, but I'm afraid someone might miss the later step to turn it off, and then their data is at risk.
+    19:07 <twb> eatmydata is a huge pain and force-unsafe-io is a better replacement.
+    19:07 <rlaager> AFAIK, force-unsafe-io only addresses dpkg's syncs, not those from maintainer scripts and things they call, though.
+    19:08 <twb> debootstrap is just a crappy bash script; it will default to calling dpkg if you run it on a system with dpkg, but I don't know if you can pass options to it.  Obviously you need some of the rootfs to be present before you crate  /etc/dpkg/dpkg.cfg.d/10-racing-stripe
+    19:08 <twb> rlaager: correct, but dpkg sends a minimum of 2 syncs per directory (it used to be 2 per file, but it changed several times to work around bugs I found in dpkg-on-btrfs, and I lost track)
+    19:09 <rlaager> Anyway, hopefully one day this will be in the installer, which can safely use sync=disabled for speed without the risk of a human forgetting to undo it. :)
+    19:10 <twb> --extractor=ar is probably enough to bypass the syncs when using debootstrap
+    19:10 <twb> rlaager: BTW what does devices=off do in your howto?  I read the manpage but I didn't understand it
+    19:11 <rlaager> twb: devices=off == nodev
+    19:11 <twb> oh, I see
+    19:11 <twb> So really nodev,nosuid,noexec should be set on basically everything except like /usr
+    19:12 <rlaager> It's the one "security" type thing I left after I removed all the nosuid/noexec stuff. These days, nobody really needs device nodes.
+    19:12 <rlaager> If you dig through the history, you'll find more nosuid/noexec. I removed those because they break random things, like Postfix (which chroots into /var so needs at least exec).
+    19:12 <twb> I wish Kees Cook would just make linux default to all three so you had to mount the rootfs with -o exec
+    19:13 <rlaager> Yeah, you're clearly the target audience for the old approach. :) Dig through the history of that wiki page (a git checkout is easier than the web interface for that).
+    19:13 <twb> no worries
+    19:13 <pink_mist> 11:11 <twb> So really nodev,nosuid,noexec should be set on basically everything except like /usr <-- uhm, I would like the stuff in /bin and /sbin to continue working
+    19:13 <twb> pink_mist: handwave
+    19:14 <pink_mist> also I would like to be able to compile and run code from my home dir
+    19:14 <twb> I do get people whinging occasionally because they can't run scripts from /home
+    19:14 <rlaager> To be clear, I was setting the restrictions only on /var, then unsetting on /var children as needed.
+    19:15 <rlaager> Well, or something like that. You could exec from /home.
+    19:15 <twb> OTOH most of my end users are detainees (convicted or remanded into custody)
+    19:17 <twb> noexec doesn't actually stop you using things like bash, python, tcc.  It just stops ./a.out.  It's about as hard to break out of as chroot(2).
+
+    19:33 <twb> rlaager: have you tried zfs-dracut on Debian?
+    19:47 <jtara> rlaager: remember that even if sync=disabled, you still have a guarantee of data durability at 5 second intervals (by default) and stronger ordering guarantees than sync=standard
+    19:47 <jtara> though
+    19:47 <twb> plus obviously a COW
+    19:47 <jtara> i would ask why dpkg is issuing sync writes
+    19:48 <jtara> twb that doesn't change at all though
+    19:48 <jtara> you always cow.  cow cow uber alles.
+    19:48 <twb> It's basically paranoia because dpkg doesn't have any confidence that stuff is actually hitting a disk.
+    19:49 <twb> Because like, for all they know the rootfs is a fuse driver on top of iSCSI on top of IP-over-pigeon
+    19:49 <twb> You can argue that spamming syncs doesn't help, but I can totally understand how they got there
+    19:50 <jtara> a lot of programs abuse fsync, they really do
+    19:50 <jtara> but it shouldn't be that damaging if you avoid indirect sync and rmw
+    19:50 <twb> Obviously what you really want is for dpkg to unpack to a purely functional filesystem like zypperfs :P
+    19:50 <jtara> well that would be nice too :)
+    19:51 <jtara> and a kitten
+    19:53 <jtara> anyway it's one reason why i recommend a slog so much, they help an unbelievable amount when you have apps spamming fsync
+    19:53 <jtara> otherwise if you have async writes to a file, and then an fsync to seal it off...all those async writes get committed to the pool as indirect sync
+    19:53 <jtara> and that really toads the wet sprocket
+    19:54 <twb> Is that tanker jargon?
+
+    20:05 <twb> jtara: re "why does dpkg even sync?" Message-ID: <19699.43281.82329.482744@chiark.greenend.org.uk> is a pretty good snark (from rlaager's earlier link)
+    20:08 <jtara> ah thanks
+    20:09 <jtara> i'm of the opinion that everything in the universe should do writeahead logging, but reality hasn't caught up :p
+    20:11 <twb> I use sqlite WAL and NFSv4 occasionally bricks it
+    20:11 <twb> Although obviously that's NFSv4's fault
+    20:12 <jtara> yeah i could see that
+    20:12 <jtara> i'm on this massive kerberized nfs rollout right now
+    20:12 <twb> only sec=sys here
+    20:12 <jtara> credential rotation and management ends up being a colossal hassle
+    20:12 <jtara> we deal with PCI, PII and every other TLA i can think of so
+    20:13 <twb> I have given up on non-AD krb as too much hassle
+    20:13 <jtara> yeah i'm letting our AD team manage that end of things
+    20:13 <jtara> they just give us an OU to manage under
+    20:13 <twb> cool
+    20:14 <twb> I did a samba 4.0.0 AD rollout that was.. exciting
+    20:14 <twb> I had to hire one of the samba core devs to help me
+    20:15 <jtara> my sympathies
+    20:16 <jtara> i'm stuffing gssproxy into a container and ducting auth stuff to it through the pachinko machine that is gss
+    20:17 <jtara> so that we can make it generally available on kube/docker
+    20:18 <twb> http://cyber.com.au/~twb/tmp/docker.pdf
+    20:18 <jtara> tbh the messy part is when you have the same keytab on a few hundred hosts and you need to handle automatic rotation cleanly
+    20:19 <jtara> without interruption
+    20:19 <twb> Did you know pachinko machines were originally based on a device used to demonstrate the normal distribution to stupid politicians
+    20:19 <jtara> hah, that's great
+    20:20 <twb> https://www.youtube.com/watch?v=AUSKTk9ENzg  (sorry, I can't find the wikipedia link easily)
