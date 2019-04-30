@@ -62,8 +62,7 @@ zfs create -o canmount=off                              omega/var
 zfs create -o quota=256G                                omega/var/mail  # per-user mail (& list?) mail
 zfs create -o quota=8G   -o com.sun:auto-snapshot=false omega/var/tmp  # qemu -snapshot & systemd put stuff here
 zfs create -o quota=8G   -o com.sun:auto-snapshot=false omega/var/cache
-zfs create -o quota=256G -o com.sun:auto-snapshot=false omega/var/cache/apt/debian  # debmirror of upstream
-zfs create -o quota=32G  -o com.sun:auto-snapshot=false omega/var/cache/apt/debian-security  # debmirror of upstream
+zfs create -o quota=256G -o com.sun:auto-snapshot=false omega/var/cache/debmirror  # was /srv/apt/debian and /srv/apt/debian-security
 zfs create -o quota=32G                                 omega/var/log
 zfs create -o quota=8G                                  omega/var/log/journal  # FIXME: does journald actually detect this quota?
 
@@ -121,59 +120,101 @@ chmod 1777 /mnt/var/tmp
 #        fatresize it to 8GB or similar,
 #        mount it on /mnt/boot/efi
 
-debootstrap --include=tzdata,locales buster /mnt         # FIXME: tweak args
+## FIXME: check checksum and/or .sig?
+## UPDATE: resizing is having problems, so probably resort to using the refind INSIDE debian (which has some annoying "helper" code we don't want).
+# apt install unzip parted fatresize
+# wget --content-disposition https://sourceforge.net/projects/refind/files/0.11.4/refind-flashdrive-0.11.4.zip/download
+# unzip refind-flashdrive-0.11.4.zip
+# cp refind-flashdrive-0.11.4/refind-flashdrive-0.11.4.img /dev/disk/by-id/"${SSDs[2]}"
+# parted /dev/disk/by-id/"${SSDs[2]}" print Fix  # Fix the second GPT (because the .img is smaller than the real disk)
+#
+# ## FIXME: THIS IS NOT WORKING
+# # 18:56 <twb> root@localhost:~# fatresize --info /dev/disk/by-id/"${SSDs[2]}"-part1
+# # 18:56 <twb> Error: Could not stat device /dev/disk/by-id/usb-Verbatim_STORE_N_GO_070B653669168620-0:0-part - No such file or directory.
+# # 18:56 <twb> stupid hard-coded C crap
+# parted /dev/disk/by-id/"${SSDs[2]}" resizepart 1 2GiB
+# # 18:59 <twb> After growing the GPT partition, I get this:
+# # 18:59 <twb> No Implementation: File system is FAT12, which is unsupported.
+# # 18:59 <twb> Which is like... FUCK YOU, gparted handles this JUST FINE
+
+# This is our rebuild of the zfs 0.8~rc4 packages.
+# We use them instead of the buster standard 0.7.13 packages because 0.8 adds support for a systemd mount generator, which makes zfs+systemd work with less hand-holding.
+# These packages are currently in Debian NEW queue, and will eventually land in experimental (and then hopefully in unstable, testing, and finally buster-backports).
+rsync -ai cyber-buster/ /mnt/srv/apt/cyber-buster/
+
+apt update
+apt install debootstrap
+## FIXME: for some reason, running debootstrap the first time seems to fail straight away.
+## I dunno, maybe DNS is slow to get a SRV record or something.
+## Anyway, the second time it works fine, so fuck it, just run it twice.
+mkdir /tmp/delete-me
+debootstrap buster /tmp/delete-me || :  # usually fails
+rm -rf /tmp/delete-me
+
+debootstrap --include=ca-certificates buster /mnt         # FIXME: tweak args
 zfs set devices=off omega       # ????
 
-cd /mnt
->etc/hostname echo omega
->etc/hosts    cat <<EOF
+mount --rbind /dev  /mnt/dev
+mount --rbind /proc /mnt/proc
+mount --rbind /sys  /mnt/sys
+
+
+>/mnt/etc/hostname echo omega
+>/mnt/etc/hosts    cat <<EOF
 127.0.0.1  localhost
 127.0.1.1  omega.cyber.com.au omega
 # FIXME: IPv6 stuff here?
 EOF
 
 # FIXME: set up systemd-networkd
-rm etc/apt/sources.list
->/etc/apt/sources.list.d/debian.sources <<EOF
+rm /mnt/etc/apt/sources.list
+>/mnt/etc/apt/sources.list.d/cyber-buster.list echo 'deb file:/srv/apt/cyber-buster/ ./'
+>/mnt/etc/apt/sources.list.d/debian.sources cat <<EOF
 # Ref. https://manpages.debian.org/stretch/apt/sources.list.5.en.html#DEB822-STYLE_FORMAT
 # NOTE: intel-microcode & amd64-microcode needs contrib & non-free!
 # FIXME: is it safe to place deb.debian.org and security.debian.org together?
 Types: deb
-URIs: file:/var/cache/apt/debian-security https://deb.debian.org/debian-security http://security.debian.org
+#GOOD#URIs: file:/var/cache/debmirror/debian-security https://deb.debian.org/debian-security http://security.debian.org
+URIs: http://apt.cyber.com.au/debian-security  https://deb.debian.org/debian-security http://security.debian.org
 Suites: buster/updates
 Components: main contrib non-free
 
 # NOTE: "buster-backports" will not work until buster is released (ETA 2019Q2).
 Types: deb
-URIs: file:/var/cache/apt/debian https://deb.debian.org/debian
-Suites: buster buster-updates buster-backports
+#GOOD# URIs: file:/var/cache/debmirror/debian https://deb.debian.org/debian
+URIs: http://apt.cyber.com.au/debian  https://deb.debian.org/debian
+#GOOD# Suites: buster buster-updates buster-backports
+Suites: buster buster-updates
 Components: main contrib non-free
 EOF
 
-chroot . apt update
 
-# mount --rbind /dev  /mnt/dev
-# mount --rbind /proc /mnt/proc
-# mount --rbind /sys  /mnt/sys
-# chroot /mnt /bin/bash --login
-
-chroot . dpkg-reconfigure locales   # set LANG=en_AU.UTF-8
-chroot . dpkg-reconfigure tzdata    # set TZ=Australia/Melbourne
->etc/apt/apt.conf.d/10stable         echo "APT::Default-Release \"$r\";"
+chroot /mnt apt update
+chroot /mnt apt install tzdata,locales,linux-image-amd64
+chroot /mnt dpkg-reconfigure locales   # set LANG=en_AU.UTF-8
+chroot /mnt dpkg-reconfigure tzdata    # set TZ=Australia/Melbourne
+>/mnt/etc/apt/apt.conf.d/10stable      echo 'APT::Default-Release "buster";'
 
 # FIXME: install ZFS 0.8~rc4 drivers!!!  (UPDATE: INCLUDING zfs-zed and zfs-dracut and/or zfs-initramfs!)
 ## Do this using file:/ apt repo, not using HTTP to a host that'll go away as part of this upgrade!!!
 ## (ACTUALLY, ideally use Debian's own version of this, not our recompile!)
-##>$t/etc/apt/sources.list.d/zfs0.8.list  echo 'deb [trusted=yes] http://apt.cyber.com.au/internal-buster/ ./'
+##>/mnt/etc/apt/sources.list.d/zfs0.8.list  echo 'deb [trusted=yes] http://apt.cyber.com.au/internal-buster/ ./'
 
 # FIXME: set up initramfs-tools and kernel pre/postinst hooks to copy /boot/ into /boot/efi/<something>.
 
 # FIXME: try dracut instead of initramfs-tools!!!
+chroot /mnt apt install dracut cryptsetup- lvm2- dmraid- mdadm-
+## Without -q you can see all the buggy warnings
+# root@localhost:~# chroot /mnt dracut --force /boot/initrd.img-4.19.0-4-amd64 4.19.0-4-amd64
+
+chroot /mnt apt install {zfs-dkms,zfsutils-linux,zfs-dracut,spl,spl-dkms,zfs-zed,libnvpair1linux,libuutil1linux,libzfs2linux,libzpool2linux}=0.8.0~rc4-1 build-essential linux-headers-amd64
+chroot /mnt apt-mark auto {spl,spl-dkms,zfs-zed,libnvpair1linux,libuutil1linux,libzfs2linux,libzpool2linux} build-essential linux-headers-amd64
+chroot /mnt apt install intel-microcode amd64-microcode initramfs-tools-
 
 # FIXME: add /tmp tmpfs!  Cap it at (say) 10% of total RAM.
 
 # Set a root password!
-chroot . passwd
+chroot /mnt passwd
 
 # FIXME: add hardeninnnnnnnnnnnng!
 
@@ -200,12 +241,12 @@ echo RESUME=none >/mnt/etc/initramfs-tools/conf.d/resume
 ######################################################################
 ### We need to activate zfs-mount-generator. This makes systemd aware of the separate mountpoints, which is important for things like /var/log and /var/tmp. In turn, rsyslog.service depends on
 
-mkdir etc/zfs/zfs-list.cache
-touch etc/zfs/zfs-list.cache/omega
+mkdir /mnt/etc/zfs/zfs-list.cache
+touch /mnt/etc/zfs/zfs-list.cache/omega
 ln -s /usr/lib/zfs-linux/zed.d/history_event-zfs-list-cacher.sh etc/zfs/zed.d  # ????
-chroot . zed -F &
+chroot /mnt zed -F &
 # Verify that zed updated the cache by making sure this is not empty:
-cat etc/zfs/zfs-list.cache/omega
+cat /mnt/etc/zfs/zfs-list.cache/omega
 # If it is empty, force a cache update and check again:
 zfs set canmount=noauto omega/root
 pkill zed
@@ -214,7 +255,7 @@ sed -ri "s|/mnt/?|/|" /etc/zfs/zfs-list.cache/omega
 
 
 # Snapshot the initial installation:
-zfs snapshot omega/<all the "OS" and none of the "user data" volumes>@install
+zfs snapshot -r omega@install-1
 
 
 # FIXME: Do some I/O performance testing w/ and w/o the slog and friends.
