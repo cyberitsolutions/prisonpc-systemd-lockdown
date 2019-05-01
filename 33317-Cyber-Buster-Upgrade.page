@@ -1948,6 +1948,5 @@ IRC Logs
     21:36 <twb> It's not clear from contrib/dracut/README.dracut.markdown if I *have to* "zpool set bootfs=", of if that's only for autodetect, and rootfs=zfs=X/Y will suffice
     21:36 <twb> Ah yeah it is clear
     21:36 <twb> "Alternatively, <just do root=...>"
-    21:58 <rnydam> When I boot my zfsonroot workstation, boot is halted with a busybox prompt; No pool imported ... try zpool import -R /root -N rpool ; I then type exit in busybox and the system boots fine; any pointer where to fix this?
-    22:06 <twb> rnydam: are you saying that if you just exit busybox immediately, it works?
-    22:07 <twb> rnydam: are you running Debian 10, or what?
+    22:23 <twb> Booting Debian 10 with a zfs-dracut ramdisk, and "rd.shell" in the boot options, I get a debugging shell.  Unfortunately, the keyboard doesn't work --- probably because dracut has helpfully omitted the USB EHCI or USB HID drivers :-/
+    22:23 <twb> I'll investigate that tomorrow
