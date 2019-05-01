@@ -99,10 +99,10 @@ zfs create -o quota=4G                                  omega/srv/rrd      # col
 zfs create -o quota=1G                                  omega/srv/www      # epoxy's /var/www ?  Hardly even worth it...
 
 zfs create -o canmount=off                              omega/ZVOLs
-zfs create -V 16G                           		omega/ZVOLs/ESP-DISK  # backup of entire ESP disk, ~16GB, so it's easy to make a new one
-zfs create -V 2G                            		omega/ZVOLs/alloc-OS  # /dev/vda (/)
-zfs create -V 4G                            		omega/ZVOLs/alloc-DB  # /dev/vdb (/srv/www)
-zfs create -V 8G                            		omega/ZVOLs/alloc-FS  # /dev/vdc (/var/lib/mariadb)
+zfs create -V 16G                                       omega/ZVOLs/ESP-DISK  # backup of entire ESP disk, ~16GB, so it's easy to make a new one
+zfs create -V 2G                                        omega/ZVOLs/alloc-OS  # /dev/vda (/)
+zfs create -V 4G                                        omega/ZVOLs/alloc-DB  # /dev/vdb (/srv/www)
+zfs create -V 8G                                        omega/ZVOLs/alloc-FS  # /dev/vdc (/var/lib/mariadb)
 
 # FIXME: not documented enough.  Why aren't we doing chmod 0 on all the mountpoints before creating them?
 chmod 1777 /mnt/var/tmp
@@ -222,6 +222,8 @@ udevadm settle                  # wait for /dev to update
 mkfs.vfat -F32 -nESPOMEGA /dev/disk/by-id/"${SSDs[2]}"-part1
 install -dm0 /mnt/boot/efi      # NOTE: debootstrap should have already made /mnt/boot
 chattr +i /mnt/boot/efi         # If the ESP fails to mount, break, instead of writing into /boot filesystem.
+
+refind-install --usedefault /dev/disk/by-id/"${SSDs[2]}"-part1
 mount /dev/disk/by-id/"${SSDs[2]}"-part1 /mnt/boot/efi
 # Normally we would ignore /etc/mtab and let systemd-tmpfiles fix it on first boot.
 # But refind's postinst script breaks if we don't create it (and have /proc present), so...
@@ -230,6 +232,15 @@ mount /dev/disk/by-id/"${SSDs[2]}"-part1 /mnt/boot/efi
 ## UPDATE: that would install to ESP\EFI\REFIND\REFIND_X64.EFI and requires efibootmgr to work.
 ## If we don't trust efibootmgr to work (or can't access it because we're building and booting on different computers),
 ## instead of /etc/mtab, we need the ESP to be mountable, but NOT mounted, and then do "refind-install --usedefault ...-part1".
+
+cat >/mnt/boot/refind_linux.conf cat <<EOF
+"Boot with standard options"  "root=zfs=omega/ROOT"
+EOF
+chroot /mnt apt install flash-kernel-efi
+chroot /mnt flash-kernel-efi
+
+
+cp -v /etc/hostid /mnt/etc/hostid
 
 
 # FIXME: add /tmp tmpfs!  Cap it at (say) 10% of total RAM.
@@ -250,8 +261,8 @@ chroot /mnt passwd
 zfs create -V 4G -b $(getconf PAGESIZE) -o compression=zle \
       -o logbias=throughput -o sync=always \
       -o primarycache=metadata -o secondarycache=none \
-      -o com.sun:auto-snapshot=false omega/SWAP
-mkswap -f /dev/zvol/omega/SWAP
+      -o com.sun:auto-snapshot=false omega/ZVOLs/SWAP
+mkswap -f /dev/zvol/omega/ZVOLs/SWAP
 ## ADD SWAP TO FSTAB?  WHAT ABOUT THE WHOLE "AUTO DISCOVER MOUNTPOINTS" STUFF THAT SYSTEMD WAS PROMOTING FOR SINGLE-OS COMPUTERS?  SPECIAL UUIDS OR SOMETHING?
 # The RESUME=none is necessary to disable resuming from hibernation. This does not work, as the zvol is not present (because the pool has not yet been imported) at the time the resume script
 # runs. If it is not disabled, the boot process hangs for 30 seconds waiting for the swap zvol to appear.
@@ -264,12 +275,12 @@ echo RESUME=none >/mnt/etc/initramfs-tools/conf.d/resume
 
 mkdir /mnt/etc/zfs/zfs-list.cache
 touch /mnt/etc/zfs/zfs-list.cache/omega
-ln -s /usr/lib/zfs-linux/zed.d/history_event-zfs-list-cacher.sh etc/zfs/zed.d  # ????
+ln -s /usr/lib/zfs-linux/zed.d/history_event-zfs-list-cacher.sh /mnt/etc/zfs/zed.d  # ????
 chroot /mnt zed -F &
 # Verify that zed updated the cache by making sure this is not empty:
 cat /mnt/etc/zfs/zfs-list.cache/omega
 # If it is empty, force a cache update and check again:
-zfs set canmount=noauto omega/root
+zfs set canmount=noauto omega/ROOT
 pkill zed
 # Fix the paths to eliminate /mnt:  [TWB: UGGGGGGH]
 sed -ri "s|/mnt/?|/|" /etc/zfs/zfs-list.cache/omega
@@ -299,3 +310,18 @@ zfs snapshot -r omega@install-1
 
 ## DURING TESTING, USE TINYSSHD.
 ## DURING PROD, USE OPENSSH-SERVER BECAUSE BETTER RATE-LIMITING.
+
+chroot /mnt apt install openssh-server curl wget wget2
+chroot /mnt install -dm700 /root/.ssh
+chroot /mnt wget -O- http://cyber.com.au/~twb/.ssh/authorized_keys >/mnt/root/.ssh/authorized_keys
+
+chroot /mnt systemctl enable systemd-network
+cat >/mnt/etc/systemd/network/upstream.network <<EOF
+[Match]
+Name=enp11s0
+[Network]
+DHCP=yes
+DNSSEC=no
+[DHCP]
+UseDomain=yes
+EOF

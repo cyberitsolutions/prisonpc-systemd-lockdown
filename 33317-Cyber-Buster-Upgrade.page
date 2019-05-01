@@ -337,6 +337,7 @@ References
 * https://manpages.debian.org/buster/zfsutils-linux/zfs.8.en.html
 * https://manpages.debian.org/buster/zfsutils-linux/zpool.8.en.html
 * https://systemd.io/BOOT_LOADER_SPECIFICATION   # UPDATE: not really helpful.
+* https://www.freedesktop.org/wiki/Specifications/DiscoverablePartitionsSpec/  # This is what I thought the previous link was!!!
 
   I have confirmed the EFIFS 1.3 uses grub-core's zfs.c almost at HEAD.
   This is the commit of grub that efifs is using::
@@ -1774,3 +1775,179 @@ IRC Logs
     20:19 <twb> Did you know pachinko machines were originally based on a device used to demonstrate the normal distribution to stupid politicians
     20:19 <jtara> hah, that's great
     20:20 <twb> https://www.youtube.com/watch?v=AUSKTk9ENzg  (sorry, I can't find the wikipedia link easily)
+
+2019-05-01 #dracut::
+
+    11:36 <twb> Mrfai: hey, so re "if I omit the bash module, will it stop me, or will it just break?"
+    11:37 <twb> It will definitely Just Break things, because lots of in-ramdisk scripts are written as "#!/bin/sh", but use bashisms, and do not declare a depends() on bash
+    11:44 <twb> As a trivial example, modules.d/98dracut-systemd/dracut-cmdline-ask.sh needs /bin/bash (for sleep 0.5), but modules.d/98dracut-systemd/module-setup.sh does not depends() { echo "bash ..."; }
+    11:55 <twb> Coming at this project cold, I'm surprised that the dependencies aren't done in a declarative file (a la debian/control), and the install rules aren't usually declarative (a la debian/install), that conflicts declarations are done indirectly (if ! dracut_module_included "PACKAGE"; then return 1; fi)
+    11:56 <twb> I'm also really surprised that bash (heavyweight and slow) is still being used when part of the salespitch for systemd is that everything is little C programs with faster spin-up times.
+    11:56 <twb> Possibly that's because RH switched from nash to dracut earlier than I remember, before systemd was A Thing
+    11:59 <twb> Some scripts try to detect errors by adding exit statuses together, e.g. 51-dracut-rescue-postinst.sh:    ((ret+=$?)) --- this is not safe if the exit codes wrap around, or add up to an exit code with special meaning (e.g. 127 means "command not found", 126 means not an executable regular file)
+    12:01 <twb> shellcheck also detects a large number of sh/bash newbie mistakes that should be easy to fix, such as treating an array as a scalar
+    12:14 <twb> http://ix.io/1HHU  (some of them are false positives; I haven't gone through it in detail yet)
+    13:13 <twb> In modules.d/05busybox/module-setup.sh, it's post-processing the help output of busybox.  In busybox versions since 2010, it can instead just use the output of busybox --list or busybox --list-full.
+    13:14 <twb> It can also just use busybox --install -s to create the symlinks directly.
+    13:14 <twb> None of these approaches (including the approach in current dracut) will work with busybox "make allnoconfig" (minimal build).
+    13:21 <twb> What is $mount_needs ?
+    13:22 <twb> Oh, it appears that check() can be called to do *two different* kinds of checks, and looking at whether $mount_needs is defined allows check() functions to know which kind of check they are supposed to be checking.
+    13:31 <twb> Looks like dracut will not correctly pick up on any changes the sysadmin makes with "systemctl edit", since those go into /etc/systemd/system/foo and dracut is only checking /lib/systemd/system/foo
+
+2019-05-01 #debian-au::
+
+    13:26 <twb> How hard would it be to construct the ramdisk out of udebs
+    13:27 <twb> I mean... this dracut code is all shitty shell scripts with *NO* error handling, and 95% could be trivially replaced by declarative rules a la debhelper
+    13:27 <twb> And udebs are already set up to e.g. have the kernel modules split up into as-needed sections, and they have the docs stripped out &c
+    13:28 <twb> And (hopefully) anna-install is smart enough to refuse to install conflicting udebs
+    13:28 <twb> Right now, the dracut code all just goes like "if /bin/sh exists, silently do nothing, otherwise install myself as /bin/sh"
+    13:36 <pabs> probably pretty easily. debirf can create initrds from a normal system
+    13:38 <twb> pabs: hrmm, I didn't know about debirf
+    13:39 <twb> pabs: oh that's *THAT*.  Wow that's cool, I've been thinking about building that for ages
+    13:40 <twb> SIGH, another bash script
+    13:40 <twb> goddammit people stop using bash
+    13:40 <twb> At least this one is 1KLOC not 8KLOC like dracut
+    13:44 <twb> http://ix.io/1HI8/bash
+
+    14:41 <pabs> Debian has support for drop detection via the hdapsd package
+    14:41 <twb> Cool
+    15:54 <rjsalts> also https://www.backblaze.com/blog/hard-drive-stats-for-2018/ is educational in respect to the drives they buy
+
+    14:01 <twb> pabs: /usr/share/debirf/modules/z0_remove-locales  suggests they're being at least slightly silly (not using udebs, or not using dpkg --path-excludes a la localepurge)
+    14:01 <twb> Ahaha, I just noticed it's explicitly keeping "en*" locales
+    14:39 <twb> pabs: debirf didn't Just Work on buster, I think probably because recent debootstrap minimal no longer includes "init"
+    14:39 <twb> http://ix.io/1HIr
+    14:42 <pabs> twb: probably worth filing a bug about that issue
+
+    16:27 <twb> «Removable media without either GPT or MBR formatting is considered a "superfloppy"»
+    16:27 <twb> Stay classy, Microsoft.
+    16:28 <rjsalts> I couldn't make a udf super floppy with a usb hd in windows
+    16:28 <twb> What I'm trying to tell is whether this is a valid ESP:
+    16:28 <twb> SEC_TYPE="msdos" LABEL_FATBOOT="ESPOMEGA" LABEL="ESPOMEGA" UUID="C08E-115B" TYPE="vfat" PARTLABEL="ESP-omega" PARTUUID="1971ae22-c5e5-4fab-ac35-2d32029e1962"
+    16:28 <twb> This one, definitely is:
+    16:29 <twb> SEC_TYPE="msdos" LABEL_FATBOOT="ElTorito" LABEL="ElTorito" UUID="FE20-DD95" TYPE="vfat" PARTUUID="c271db03-317d-44ed-aad3-1a7c34d614c7"
+    16:29 <rjsalts> for the live image?
+    16:29 <twb> for a server
+    16:29 <twb> ElTorito is, I think, just Rod smoking crack
+    16:29 <twb> wget --content-disposition https://sourceforge.net/projects/refind/files/0.11.4/refind-flashdrive-0.11.4.zip/download
+    16:29 <twb> ^ that's the second one's origin
+
+    <see the #cyber IRC log from the same day -
+     the problem is that on gigabyte mainboard,
+     the mainboard can't see refind/refind_x64.efi on a USB key's ESP,
+     though it *CAN* see boot/bootx64.efi on a USB key's ESP.
+     I think the problem is that it only allows efibootmgr magic
+     for internal AHCI hard disks, not
+     for external USB hard disks.>
+
+    17:01 <twb> Oy, MacOS spells "FDE" with a W
+    21:57 <twb> Sveta: hey hey hey
+    21:57 <twb> remember when you were getting "no such file" for "mount -t vfat /dev/sdx1 /mnt"
+    21:58 <twb> in the ramdisk
+    21:58 <twb> Well, I can reproduce that problem on Debian 10 Buster
+    21:58 <twb> MOST likely is that mount is from util-linux there, and the file that isn't found is the dynamic linker
+    21:59 <twb> damn, "busybox mount" has the same problem
+
+2019-05-01 #zfsonlinux::
+
+    13:49 <lundman> bah "Fix the spelling of deferred" contains a bunch of code too
+    13:52 <twb> Hey are you fixing spelling in ZOL codebase?
+    13:52 <twb> Because lintian auto-detected about 5 typos
+    13:53 <twb> http://ix.io/1HIa
+    13:53 <lundman> no, I'm cherry-picking in commits - and thought I was doing non-code related commits
+    13:53 <lundman> only to find compiling breaks
+    13:53 <twb> Curses
+    14:19 <twb> May 01 13:19:33 jasmine kernel: INFO: task txg_sync:1440 blocked for more than 120 seconds.
+    14:19 <twb> That sounds pretty scary
+    14:28 <rlaager> lundman: It certainly does not contain a bunch of code. The commit consists of one spelling correction in zpool-features.5 and one spelling fix in a comment in zil.c.
+    14:41 <twb> So, under the hood, dracut is really bad.  As bad as initramfs-tools.  Right now I'm leaning towards "stick with the devil you know" (i.e. initramfs-tools).
+    15:00 <twb> I guess what I need to do is look at zfs-dracut vs. zfs-initramfs specifically
+    15:01 <twb> If zfs-dracut is correctly using 0.8's systemd zfs-mount-generator, that would be a strong argument in its favour
+    15:01 <lundman> rlaager: yeah checked ZOL commit and it doesnt, git blame said it did
+    15:02 <lundman> either way, corrected locally
+    15:02 <prometheanfire> I forget if it does, I'm running it on systemd, any easy way to tell?
+    15:03 <prometheanfire> usr-portage-distfiles.mount                                                            loaded active mounted   /usr/portage/distfiles
+    15:03 <prometheanfire> looks right?
+    15:04 <twb> prometheanfire: I _think_ the recommended way is to test for the existence of /run/systemd.  There is also "systemctl is-systemd-running", but that does something else.
+    15:04 <twb> prometheanfire: sorry, I misread
+    15:04 <prometheanfire> /usr/lib/systemd/system-generators/zfs-mount-generator
+    15:05 <prometheanfire> I'm guessing that's what you want
+    15:06 <twb> prometheanfire: yeah but dracut doesn't copy all the systemd units into the ramdisk; it cherry-picks them :-/
+    15:07 <prometheanfire> ya, dracut, well dracut just mounts the rootfs as defined in the zpool
+    15:07 <prometheanfire> then chroots to it
+    15:08 <twb> But it has to mount it in a way systemd understands, otherwise systemd will screw up
+    15:08 <twb> Which is what the generators are for
+    15:08 <twb> It looks like there's a separate dedicated one: usr/lib/systemd/system-generators/dracut-zfs-generator
+    15:09 <prometheanfire> ah
+    15:09 <prometheanfire> /usr/lib/dracut/modules.d/90zfs/zfs-generator.sh (installed)
+    15:11 <twb> Yeah the entry point is module-setup.sh in that dir.  It is sourced by dracut.sh at build time in the build environment.  The other files in that dir (typically) run inside the initramfs
+    15:12 <twb> I hate that this code is all crummy bash scripts
+    15:12 <prometheanfire> your welcome :P
+    15:12 <prometheanfire> I wrote some of that
+    15:13 <twb> did you run shellcheck on it? ;-)
+    15:16 <twb> Urk, it just says "install awk" without worrying about which awk will actually be used.
+    15:18 <twb> Looks like that's specific to zfs-dracut.
+    15:20 <twb>         if [ $(zpool list -H -o feature@encryption $(echo "${ZFS_POOL}" | awk -F\/ '{print $1}')) = 'active' ]; then
+    15:20 <twb> should probably be
+    15:20 <twb>         if [ "$(zpool list -H -o feature@encryption "$(echo "${ZFS_POOL}" | awk -F\/ '{print $1}')")" = 'active' ]; then
+    15:21 <twb> That can be replaced by cut -d/ -f2
+    15:22 <twb> depends() does not declare a dependency on systemd-initrd, but it is calling "systemctl is-failed" in zfs-load-keys.sh
+    15:23 <twb> Ah, zfs-load-key is intentionally a NOP if systemd isn't installed, so that's OK
+    15:37 [twb looks inside /etc/zfs/zfs-functions and starts crying]
+    15:37 <twb> "# Of course the functions we need are called differently on different distributions - it would be way too easy otherwise!!"
+    15:38 <twb> This is like sausages and legislation
+    16:33 <lundman> disappointing you guys went with /sys/module/zfs/version for version control
+    16:35 <twb> lundman: that seems to be "0.8.0~rc4-1" for me, i.e. the debianized zol version
+    16:36 <twb> But I've got like /sys/module/tcp_cubic/version = 2.3, so I guess that's vaguely standard?
+    16:37 <lundman> i meant more - its not portable anywhere else :)
+    16:38 <twb> ah, you wanted something in sysctl I guess
+    17:16 <twb> If I have an slog drive, and it dies, what happens to the pool?
+    17:21 <lundman> slog moves back into pool storage as if you didnt have an slog
+    17:22 <twb> so basically it will recover on its own?
+    17:22 <twb> What happens to the writes that were in-flight in the slog?
+    18:04 <twb> How come "zfs create -V 4G foo/bar" reports foo/bar as using 4.13G ?
+    18:05 <twb> Is the 0.13 additional metadata, or is it the difference between 4GiB and 4GB ?
+    18:05 <JMoVS> 4GiB is 4.294967 GB
+    18:05 <twb> 4GiB - 4GB is about 281MiB, so it can't be that.
+    18:12 <twb> cp --target-directory="$DESTDIR" --parents $(find /lib/ -type f -name libgcc_s.so.1)
+    18:13 <twb> ...why doesn't that just do find /lib/ -type f -name libgcc_s.so.1 -execdir cp -pt "$DESTDIR" {} +
+    18:19 <twb> Hahah "# With pull request 1476 (not yet merged) comes a verbose warning if /usr/bin/net doesn't exist or isn't executable. Just create a dummy..."
+    18:20 <twb> Why is /usr/share/initramfs-tools/scripts/local-top/zfs talking about LVM?
+    18:50 <Marbug> Good morning! I'm looking into an issue I have with user id mapping on a partition shared with sharenfs, in the documentation about the options of sharenfs, they redirect you to the options of exports, although, when I for example specify sharenfs=mapall.. it says it's an invalid option, is it even possible to map user id's to a new id? lets say, user id 2345 to 1000?
+    18:59 <twb> Why can't I ever "zpool export -af"
+    19:00 <twb> It just says "pool is busy", but won't tell me WHY
+    19:00 <twb> Nothing is mounted according to /proc/self/mountinfo, and "zpool iostat 5" shows no reads or writes
+    19:01 <twb> There's nothing in dmesg or journal (syslog) either.
+    19:07 <twb> >super frustrated!<  I'll patch out the "zfs import -aN" from my recovery image and then reboot again.  It won't fix the "I can never export" problem, but it will at least let me import with -R
+    19:21 <twb> OK.  When I disable boot-time ZFS magic, I can manually "zpool import -R /mnt omega" and then "zfs export omega" works fine.
+    19:23 <twb> But THEN, I can't mount omega/ROOT again, because it's set to be mounted by hand, but all the other datasets are set to automount, so they've already gotten mounted before I got there!
+    19:25 <twb> "zpool export omega", "find /mnt/ -mindepth 1 -depth -exec rmdir {} +" "zpool import -N -R /mnt omega", "zfs mount omega/ROOT", "zfs mount -a"
+    19:25 <twb> OK, THAT is working.  AND I can still "zpool export".
+    20:08 <twb> Is /etc/hostid supposed to be copied into the initramfs-tools ramdisk?  IIRC zfs-dracut did it...
+    20:08 <DeHackEd> probably....
+    20:08 <twb> Hrm... contrib/initramfs/hooks/zfs.in:COPY_FILE_LIST="/etc/hostid @sysconfdir@/zfs/zpool.cache"
+    20:09 <twb> So it's *supposed* to be there.  Probably I screwed something up
+    20:09 <twb> contrib/dracut/90zfs appears to support setting it at boot time, as well
+    20:15 <twb> SUCESSSSSS
+    20:16 <twb> I have gigabyte -> refind -> zfs-initramfs -> zfs rootfs working
+    20:16 <twb> As usual, systemd is stupid and doesn't umount /var/log/journal at shutdown time, though, so probably the entire pool is imported when power is cut :-/
+    20:36 <twb> rlaager: one downside of zfs managing all the mounts, is that "df -h" is not sorted anymore!
+    20:38 <twb> Also oddly, all my stuff is mounted even though I don't see any output from zfs-mount-generator .mount units...
+    20:38 <twb> I guess "mount -a" happened as some kind of fallback behaviour, because /etc/zfs/cache wasn't properly populated
+    20:39 <twb> * /etc/zfs/zfs-list.cache
+    20:45 /join #systemd
+    21:08 <twb> rlaager: aha! after setting up /etc/zfs/zfs-list.cache/<pool name>, and rebooting a couple of times, the zfs-mount-generator has kicked in
+    21:09 <twb> i.e. it's working
+    21:19 <twb> OK, let's see how well zfs-dracut works...
+    21:23 <twb> "don't know how to handle root=zfs=omega/ROOT"
+    21:23 <twb> I think simply doing "apt install zfs-dracut" causes dracut to be installed, to build the ramdisk, *then* zfs dracut support to be installed, and the ramdisk isn't rebuilt (because ugh)
+    21:24 <twb> https://bugs.debian.org/720081 &c
+    21:24 <zfs-bot> [ #720081 - Add support for dpkg triggers - Debian Bug report logs ] - bugs.debian.org
+    21:27 <twb> Nope, lsinitrd confirms that zfs support was compiled in
+    21:29 <twb> That was a ramdisk built with "prefer busybox over shitty bloated bash", so maybe that's the problem.  Lemme try again without that...
+    21:36 <twb> It's not clear from contrib/dracut/README.dracut.markdown if I *have to* "zpool set bootfs=", of if that's only for autodetect, and rootfs=zfs=X/Y will suffice
+    21:36 <twb> Ah yeah it is clear
+    21:36 <twb> "Alternatively, <just do root=...>"
+    21:58 <rnydam> When I boot my zfsonroot workstation, boot is halted with a busybox prompt; No pool imported ... try zpool import -R /root -N rpool ; I then type exit in busybox and the system boots fine; any pointer where to fix this?
+    22:06 <twb> rnydam: are you saying that if you just exit busybox immediately, it works?
+    22:07 <twb> rnydam: are you running Debian 10, or what?
