@@ -136,6 +136,25 @@ chmod 1777 /mnt/var/tmp
 # # 18:59 <twb> After growing the GPT partition, I get this:
 # # 18:59 <twb> No Implementation: File system is FAT12, which is unsupported.
 # # 18:59 <twb> Which is like... FUCK YOU, gparted handles this JUST FINE
+apt update
+apt install parted dosfstools
+wipefs -a /dev/disk/by-id/"${SSDs[2]}"
+parted -saopt /dev/disk/by-id/"${SSDs[2]}" mklabel gpt mkpart ESP-omega 0% 1GiB set 1 esp on
+udevadm settle                  # wait for /dev to update
+mkfs.vfat -F32 -nESPOMEGA /dev/disk/by-id/"${SSDs[2]}"-part1
+install -dm0 /mnt/boot/efi      # NOTE: debootstrap should have already made /mnt/boot
+chattr +i /mnt/boot/efi         # If the ESP fails to mount, break, instead of writing into /boot filesystem.
+mount /dev/disk/by-id/"${SSDs[2]}"-part1 /mnt/boot/efi
+# Normally we would ignore /etc/mtab and let systemd-tmpfiles fix it on first boot.
+# But refind's postinst script breaks if we don't create it (and have /proc present), so...
+#ln -s ../proc/self/mounts /mnt/etc/mtab
+#chroot /mnt apt install refind
+## UPDATE: that would install to ESP\EFI\REFIND\REFIND_X64.EFI and requires efibootmgr to work.
+## If we don't trust efibootmgr to work (or can't access it because we're building and booting on different computers),
+## instead of /etc/mtab, we need the ESP to be mountable, but NOT mounted, and then do "refind-install --usedefault ...-part1".
+
+
+
 
 # This is our rebuild of the zfs 0.8~rc4 packages.
 # We use them instead of the buster standard 0.7.13 packages because 0.8 adds support for a systemd mount generator, which makes zfs+systemd work with less hand-holding.
