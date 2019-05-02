@@ -1950,3 +1950,214 @@ IRC Logs
     21:36 <twb> "Alternatively, <just do root=...>"
     22:23 <twb> Booting Debian 10 with a zfs-dracut ramdisk, and "rd.shell" in the boot options, I get a debugging shell.  Unfortunately, the keyboard doesn't work --- probably because dracut has helpfully omitted the USB EHCI or USB HID drivers :-/
     22:23 <twb> I'll investigate that tomorrow
+
+2019-05-02 #dracut::
+
+    11:29 <twb> OK so yesterday I finally tried actually booting via dracut, and the zfs-dracut code isn't working.  I added "rd.shell" to debug it, and I was taken to a debug prompt... but the USB keyboard doesn't work.  Do I have to do something clever to force EHCI and HID drivers to load?  In initramfs-tools, there are explicit modprobes for things like that when the debug shell is triggered
+    12:33 <twb> plugging in a "dumb" USB keyboard (instead of my fancy KVM) didn't help.  I'm about to pull apart the ramdisks now to see if e.g. the EHCI driver is even in the ramdisk
+    12:49 <twb> -rw-r--r--   1 root     root       174868 Mar 15 13:16 usr/lib/modules/4.19.0-4-amd64/kernel/drivers/usb/host/ehci-hcd.ko
+    12:49 <twb> ...so that's OK, at least.
+    12:50 <twb> Is netconsole.ko there, so I can at least get a copy of dmesg?  ...no, I'll have to patch that in.
+    16:03 <twb> OK so to catch you up:  1. dracut with an ext4 fs Just Worked.  2. dracut with spl_hostid=0xFFFFFFFF failed, and gave me a recovery shell with a working terminal.  3. zfs-dracut is supposed to create /etc/hostid inside the initrd at build time, but isn't, and I can't see why.
+    16:03 <twb> So the key problems appear to be with zfs-dracut specifically, not dracut in general
+
+2019-05-02 #debian-next::
+
+    13:00 <twb> OK so I am trying dracut (instead of initramfs-tools).  dracut fails to find the rootfs, and hangs.  Adding "rd.shell" gives me a debug shell prompt... but the USB keyboard doesn't work, so I'm still stuck.  ehci-hcd.ko is in the dracut ramdisk.  netconsole.ko isn't.  What can I try next to debug dracut booting?
+    13:42 <twb> rd.shell rd.driver.post=ehci-hcd,hid,usbhid rd.break=pre-pivot isn't enough to let me type into the recovery shell... :-/
+    16:08 <twb> FTR, 16:03 <twb> OK so to catch you up: 1. dracut with an ext4 fs Just Worked.  2. dracut with spl_hostid=0xFFFFFFFF failed, and gave me a recovery shell with a working terminal.  3. zfs-dracut is supposed to create /etc/hostid inside the initrd at build time, but isn't, and I can't see why. 16:03 <twb> So the key problems appear to be with zfs-dracut specifically, not dracut in general
+
+2019-05-02 #systemd::
+
+    11:47 <twb> You know how /var/log/journal doesn't get unmounted during shutdown?
+    11:47 <twb> I vaguely remember something about switch_root back into the initrd, so that the rootfs can be torn down cleanly (including /var/log/journal), including any RAID or iSCSI or whatever is under the rootfs
+    11:48 <twb> Where is that actually documented?  Is it maybe a Fedora-only or dracut-only thing?
+    11:48 <twb> (I'm currently trying to bring up Debian via dracut, to just see what happens experimentally, but I'm running into some unrelated bugs.)
+    14:34 <grawity> twb: the "shutdown initramfs"? I don't know about the docs, but if you have an executable at /run/initramfs/shutdown, then systemd-shutdown will pivot to /run/initramfs and run that instead of powering off
+    14:34 <twb> Hrm, that at least gives me something to look for
+    14:35 <grawity> twb: it is used on Arch with mkinitcpio, where it's a separate thing and not even part of the main initramfs
+    14:35 <twb> That would also explain why dracut's ramdisks have a shitty bash script called /shutdown
+    14:35 <twb> (even when /init is systemd :-/)
+    14:35 <grawity> https://github.com/scaleway/initrd/issues/31
+    14:45 <grawity> https://lists.debian.org/debian-kernel/2017/04/msg00079.html
+    14:48 <twb> Oh that looks interesting
+    14:49 <twb> I'm setting up a Debian 10 ZFS server, and I have been looking at dracut (so I get systemd in the ramdisk), mainly to help making setup/teardown work better.
+    14:49 <twb> But dracut is being a huge pain, and that post looks like the only *important* part I'm missing for doing this on "the devil I know" (initramfs-tools)
+    15:01 <pronoun> ooh
+    15:01 <pronoun> i wonder if that could help with the various hung shutdown states where mountpoints are in use etc
+    15:01 <pronoun> especially when lvm/luks/dm are involved
+    15:03 <grawity> that's specifically what it is made for, so hopefully yes
+    15:03 <pronoun> unmount.c btw was recently modified to use libmount and cleaned up to better support containers and unmounting of stuff no longer using /proc/self/mounts
+    15:04 <pronoun> was looking at that last night... 
+    15:06 <twb> AFAIK this problem affects systemd more than pre-systemd because journald just *will not ever shut down*, so it holds open your rootfs
+    15:06 <pronoun> still seemed to sigtem/kill itself before things fully unmonuted though =/ /proc /dev /sys were ignored but didnt see any handling for var log/journald let me find that issue
+    15:06 <twb> Whereas on a pre-systemd system, rsyslogd or busybox syslogd is just a regular program and it's killed off early on, and doesn't auto start up again
+    15:06 <grawity> well
+    15:07 <grawity> systemd execs to systemd-shutdown during the regular process
+    15:07 <grawity> and when systemd-shutdown SIGTERMs everything, it doesn't exclude journald
+    15:07 <pronoun> systemd-shutdown[1]: Received SIGTERM from PID 1 (systemd-shutdown).
+    15:07 <grawity> and at this point, the main service manager is not running anymore, so there are no .services that could be restarted
+    15:07 <pronoun> including itself >_>
+    15:07 <grawity> just systemd-shutdown in a tight kill() loop
+    15:07 <twb> grawity: I'm 100% sure that on regular debian 9 installs, on shutdown I always get [FAIL] umount /var/log/journal
+    15:08 <pronoun> yeah i get it too
+    15:08 <grawity> yes, but that's an early part of the shutdown process
+    15:08 <pronoun> well.. using sd initrd
+    15:08 <twb> grawity: so you're saying that it's expected and harmless, despite the error?
+    15:08 <pronoun> it causes people with write caching on lvm problems
+    15:08 <pronoun> becusae somehow the code that is removing the dm doesn't happen
+    15:08 <grawity> twb: probably annoying to see in the logs, but it doesn't really affect the kill/umount/kill/umount loop that systemd-shutdown does once main systemd stops
+    15:09 <grawity> (it also tears down device-mapper stuff)
+    15:10 <pronoun> https://github.com/systemd/systemd/issues/11821
+    15:11 <pronoun> some links to related stuff there, and the commit mentioned... includes some changes to .service files for lvm and crypt
+    15:12 <twb> I think the main thing I need is to "zpool export -a", which will fail while /var/log/journal has open fds
+    15:13 <twb> Probably also / itself
+    15:13 <pronoun> theres directives for services for requiring mounts and conditional path stuff-- idk about open fds though, probably just do a before shutdown
+    15:14 <twb> So I guess I basically need a /run/initramfs that contains a copy of zpool (and necessary libraries), and a /run/initramfs/shutdown that does "zpool export -a" and whatever else it "normally" needs to do
+    15:15 <twb> pronoun: I never worried too much about it because in principle everything should be mounted -o remount,ro by then
+    15:15 <pronoun> yeah but thats fs level, who knows about the backing
+    15:15 <pronoun> in case of lvm for instance or luks
+    15:15 <twb> yeah
+    15:15 <pronoun> https://github.com/systemd/systemd/commit/874d3404cbf2363604106c8f86683db4082691ea#diff-a55dd3f995e0ee0a2ba83f24f9492eebR381 
+    15:15 <grawity> and just to clarify it, the shutdown pivot happens as the very last step (in place of powering off), so it won't fix [FAIL]s that systemd-main shows
+    15:15 <twb> I haven't noticed any actual data loss with a conventional md RAID1 + LVM + ext4 rootfs
+    15:16 <twb> grawity: thanks; understood
+    15:16 <pronoun> someone was complaining yesteday that lvm with caching got dirty
+    15:16 <grawity> unless you can configure systemd to not umount /var/lib/journal *at all*, maybe? I vaguely remember something like that
+    15:16 <twb> grawity: can I fix the fails?
+    15:17 <twb> My (probably incorrect) assumption was that during shudown, systemd stopped journald and then tried to umount /var/log/journal, but by then something had tried to log something, so journald had auto-started again
+    15:17 <pronoun> that issue they talk a bit about using conflict or after, another thing i was suggesting to the guy, no idea if zfs has support but old school write barriers
+    15:17 <twb> To me, the "obvious" right thing is for journald to write its shutdown messages into /run/, just like it does for early boot
+    15:18 <grawity> twb: I dunno, maybe if journald's .socket is stopped it ought to not re-activate the service
+    15:18 <grawity> well
+    15:18 <grawity> if journald writes to /run that won't help because journald itself is started from /
+    15:18 <grawity> brb
+    15:19 <twb> Well, it would get rid of *one* of the fails, at least ;-)
+    15:19 <pronoun> seems like unmount should happen "inside root" and then again after pivoting back to initrd
+    15:19 <pronoun> when journald is stopped
+    15:21 <twb> pronoun: yeah there's two separate whinges here: 1. (important) data loss because no /run/initramfs/shutdown means complicated storage backends aren't torn down cleanly; and 2. (minor) you shouldn't get "FAIL" messages on working systems, because it's bloody scary
+    15:22 <pronoun> they mention network fs, virtual fs, containers and stuff in the comments of unmonut.c
+    15:22 <twb> I wonder if nobody has fixed this because "normal" users have plyouth splash and so don't see the errors
+    15:22 <pronoun> but i swear systemd-shutdownd is killing itself before some of this code is run 
+    15:22 <grawity> "normal" users have /var/log/journal on rootfs, I guess
+    15:23 <twb> grawity: that wouldn't help though, would it?  You'd just get [FAIL] Unmount /
+    15:23 <twb> Unless maybe / is handled specially
+    15:23 <pronoun> i think its complicated too, like when do you stop logging, what if there was errors during shutdown etc
+    15:23 <grawity> nah, I have a feeling / is probably skipped because systemd-shutdown will remount it --ro later, can't really umount it
+    15:23 <grawity> unless you have a "shutdown initramfs" of course
+    15:23 <pronoun> one odd thing i read in comments was scenario where you loose route to your nfs
+    15:24 <pronoun> they were saying unmounting was causing it to become dirty which sounded odd to me
+    15:24 <grawity> dirty nfs share? now that's something I've never heard of
+    15:25 <pronoun> they do handle / /proc /sys /dev /usr "mount_point_is_api" "mount_point_ignore" differently
+    15:25 <pronoun> well the wording was networked fs, not nfs, but maybe it was iscsi.. but if the route is gone.. fail to see how anything could impact it =p
+    15:26 <twb> pronoun: so maybe I can avoid the scary FAIL message by setting something like x.systemd-is-essential=yes for /var/log/journal
+    15:27 <pronoun> /new_root should get unmounted in the rd after logging and all that and after pivot is what i think would be desirable
+    15:27 <twb> (Although on ZFS, the fstab actually lives inside ZFS and I can't add x.foo things to it, so...)
+    15:28 <pronoun> no idea I tried to solve this problem. It's complex lol
+    15:28 <grawity> why not
+    15:29 <pronoun> mkinitcpio.conf can copy files for ya, i think it makes a copy of your /etc/fstab and has some fstab generator as well
+    15:29 <twb> grawity: I mean there is no actual text file called fstab.  Each ZFS dataset has "mountpoint" and "canmount" metadata attributes
+    15:30 <pronoun> it'd be the initrd though that you'd want to edit? or if its internal metadata would just set normally?
+    15:30 <pronoun> not understanding i guess
+    15:33 <pronoun> there is a unmount.target btw
+    15:35 <pronoun> twb https://lists.freedesktop.org/archives/systemd-devel/2015-January/027323.html
+    15:36 <twb> Hrmm, so maybe what that means is I could do
+    15:37 <twb>  /etc/systemd/system/var-log-journal.mount [Unit] Conflicts=
+    15:37 <twb> ...and remove the conflict on umount.target
+    15:37 <twb> This is pretty confusing
+    15:37 <pronoun> might be able to leave that one but thats what i am kinda thinking, and yes very
+    15:38 <pronoun> feel like an explicit sync would be nice
+    15:38 <pronoun> .. somewhere
+    15:39 <twb> I think that's a bit cargo-culty
+    15:39 <pronoun> the sync?
+    15:40 <twb> Depends if you mean fsync() on /var/log/journal, or more like the sync in REISUB
+    15:40 <pronoun> thinking more the backings sync / flush
+    15:40 <pronoun> (write caching)
+    15:41 <twb> FWIW, umount(8) should implicitly block until that has finished
+    15:41 <twb> Although not necessarily for block-level access, e.g. ntfs-3g probably wouldn't Just Work
+    15:45 <pronoun> I think users of lvmcache though for instance, the fs unmounts / unblocks because the write cache has been cleaned or whatever fd closed etc
+    15:45 <pronoun> but the writes may have not propigated all the way down to the pv
+    15:45 <pronoun> but im not super informed about this stuff
+    15:47 <pronoun> no idea if lvchange -a n or something would block / help =/ but i dont think the dirty shutdown is always safe
+    15:47 <pronoun> https://bugs.centos.org/view.php?id=15729
+    15:49 <pronoun> didn't help things lol
+    15:50 <twb> are you allowed to lvchange -an a mounted LV?
+    15:50 <pronoun>   Logical volume vg0/downloads contains a filesystem in use. apparently not
+    15:51 <twb> thought not
+    15:54 <pronoun> umount -RrlA; looks interseting.... Recursive... readonly.... lazy... All
+    15:55 <pronoun> oh yea; this does neat things for sure. sudo umount -RlA /; haha
+    15:56 <pronoun> going to shutdown for the night... i bet i dont get hung on var now though
+
+2019-05-02 #zfsonlinux::
+
+    13:34 <twb> AHA!
+    13:34 <twb> I just noticed I've accidentally used zfs-dracut 0.7 not 0.8
+    13:42 <twb> Fixing that didn't actually let me boot
+    14:17 <CompanionCube> what is problem again?
+    14:18 <twb> Debian 10 + zfs 0.8~rc4, / is a ZFS dataset.  With zfs-initramfs, I can boot.  With zfs-dracut, dracut just goes "nah I can't mount this".  I can get a shell, but I can't get a keyboard, so I haven't been able to debug it further.
+    14:25 <CompanionCube> photo/screenshot of the mount errors?
+    14:25 <twb> I don't have a camera or a BMC
+    14:25 <twb> It looks to me like the zfs-dracut code isn't loading at all
+    14:26 <twb> The actual error message is the generic one from dracut itself, one sec...
+    14:27 <twb> die "Don't know how to handle 'root=$root'"
+    14:28 <CompanionCube> so what's getting passed in as root= on both systems?
+    14:28 <twb> root=zfs=omega/ROOT
+    14:29 <twb> I've just prepped a plain ext4 rootfs to see if dracut can at least boot from that
+    14:31 <twb> root=LABEL=FNORD works, where FNORD is an ext4 rootfs.  So apart from the lack of keyboard, the problem seems to be specific to dract + zfs root
+    14:33 <twb> dracut doesn't include netconsole.ko either, so getting logs out is tricky.  lsinitrd definitely confirms that zfs support is getting compiled into the initrd, at least.
+    14:33 [CompanionCube uses the bootfs method on desktop]
+    14:34 <CompanionCube> though it's likely not the 'right' way :p
+    14:34 <twb> I did try doing some things like "zpool set bootfs=omega/ROOT", but zpool said I wasn't allowed to set it on my pool
+    14:34 <CompanionCube> huh?
+    14:38 <twb> # zpool set bootfs=omega/ROOT omega
+    14:38 <twb> cannot set property for 'omega': operation not supported on this type of pool
+    14:39 <twb> That's trying to follow the rules from zfs.git:contrib/dracut/README.dracut.markdown
+    14:40 <twb> I don't know *why* it's "not supported".
+    14:42 <twb> The zfs-dracut docs aren't consistent in using root=zfs= or root=ZFS= or root=ZFS: but the source code looks like it'll try to handle any of them
+    14:43 <twb> Hrm, it's possible the only problem is hostid isn't set correctly inside the ramdisk...
+    14:44 <twb> Let me try explicitly setting spl_hostid=0xFFFFFFFF, since od /etc/hostid ==> 177777 177777
+    14:45 <twb> (Why it doesn't just copy /etc/hostid in, I don't know)
+    14:46 <CompanionCube> it *should* iirc
+    14:47 <twb> Aha!  Awesome!  It still doesn't work correctly, but at least I have a working keyboard this time.
+    14:47 <twb> I guess zfs-dracut bugs out in a way that breaks other parts of dracut, when there's no hostid
+    14:49 <CompanionCube> https://github.com/zfsonlinux/zfs/blob/master/contrib/dracut/90zfs/module-setup.sh.in#L85
+    14:54 <twb> yes, I see that
+    14:54 <twb> I definitely don't have /etc/hostid inside the ramdisk, I'm not sure why
+    14:55 <twb> spl_hostid=0xffffffff set the hostid to 00ffffff instead of ffffffff which is why I got a recovery shell --- it failed to import the pool, instead of failing BEFORE it even TRIED to import the pool
+    14:58 <twb> OK, switched back into a normal boot, let's have a look
+    15:01 <twb> "hostid" works where dracut runs
+    15:03 <twb> I can trace it and see it's definitely doing + echo -ne '\xff\xff\xff\xff'
+    15:05 <twb> I can also see that usr/lib/systemd/system/initrd.target.wants/zfs-import.target is getting made, right below the hostid code
+    15:05 <twb> So... wtf
+    15:52 <twb> How bad is it if my OS doesn't "zpool export" during shutdown?
+    15:52 <twb> "zpool import" seems to be quite slow (like 5 seconds), but that might just be my crappy 5400 RPM disks
+    15:52 <CompanionCube> twb: zpool export mostly just resets the hostid value
+    15:52 <twb> OK
+    15:53 <twb> If (say) my rootfs dataset is remounted -o ro, but is never unmounted, how bad is that?
+    15:53 <CompanionCube> isn
+    15:53 <CompanionCube> isn't it normal for the rootfs to never be unmounted
+    15:53 <twb> well it's funny you should say that
+    15:54 <twb> because "modern" linux has a second initrd that it switches to during shutdown, if you need to tear down the rootfs fully
+    15:54 <twb> And I'm trying to work out if I need to backport that capability to avoid ZFS getting unclean shutdowns
+    15:55 <CompanionCube> introduced by systemd, no? It's a decent idea if you want to have a go at it
+    15:57 <CompanionCube> twb: https://github.com/zfsonlinux/zfs/blob/master/contrib/dracut/90zfs/export-zfs.sh.in
+    16:06 <jtara> twb the pool will always be consistent so there won't be a consistency issue at least
+    16:06 <twb> jtara: heh, cool
+    16:07 <twb> CompanionCube: yeah that's (I think) part of the "shutdownrd" teardown that dracut implements, which I would basically be backporting to initramfs-tools (that, or fix my bugs with dracut)
+    16:08 <jtara> if you somehow manage to do some async writes really late in the shutdown process and keep a txg commit from being issued before shutdown, you might manage to lose writes
+    16:08 <jtara> but iirc a txg commit will always run before shutdown
+    16:08 <jtara> and async writes are expendible anyway :)
+    16:09 <twb> Is it normal for zpool import to take ~5 seconds?
+    16:10 <jtara> that's kind of long unless it's doing a bunch of zil block replay
+    16:11 <twb> All of the drives are relatively slow, because this is a test system.
+    16:11 <jtara> maybe do some iostats to see if it's reading and writing a lot, or just sitting there stupidly with an occasional io until it's imported?
+    16:11 <twb> jtara: you mean look at "zpool iostats 1" while the import is happening?
+    16:11 <jtara> you may not see it show up in zpool iostat at the point in the process it's having issues
+    16:11 <jtara> you may have to just use the system iostat, or blktrace, or something
+    16:13 <twb> I don't *really* care unless it's indicative of a worser problem (such as, unclean shutdown -> lots of journal to replay)
+    16:14 <jtara> if you see a lot of writes during the import, you can probably conclude that is happening
+    16:15 <jtara> or there's some zdb command you can use but I forget what it is, tbh
+    16:16 <MilkmanDan> Does unmounting all datasets modify any of the mount* properties?
+    16:16 <MilkmanDan> I would expect not but I've never tested it.
+    16:17 <jtara> I would hope that it would not
+    > 
