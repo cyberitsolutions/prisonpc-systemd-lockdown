@@ -161,6 +161,33 @@ How do we boot ZFS?
   Refind doesn't have a ZFS.EFI driver, but it can use grub2's zfs.mod, recompiled for EFI by the efifs project.
   https://efi.akeo.ie/downloads/efifs-1.3/x64/zfs_x64.efi
 
+  Is efifs's zfs_x64.efi the same as grub2's zfs.mod?
+
+      I have confirmed the EFIFS 1.3 uses grub-core's zfs.c almost at HEAD.
+      This is the commit of grub that efifs is using::
+
+          51be337 2018-04-16 22:36 -0700 NVi ∙ [HEAD] templates: Update grub script template files
+
+      There are negligible differences between that and grub master::
+
+          twb@goll[grub]$ tig HEAD..master -- grub-core/fs/zfs
+          ad4bfee 2019-04-08 07:24 +0200 VSe ∙ Change fs functions to add fs_ prefix
+          ca0a4f6 2013-11-20 02:28 +0100 VSe ∙ verifiers: File type for fine-grained signature-verification controlling
+
+      There are negligible differences between that and the (earlier) 2.02 stable grub release::
+
+          twb@goll[grub]$ tig 2.02..HEAD -- grub-core/fs/zfs
+          fa42786 2017-08-03 15:46 +0100 PBa ∙ zfs: remove size_t typedef and use grub_size_t instead
+
+      2.02 is the version of grub in Debian buster.
+      There is a 2.04 release candidate at this time (Apr 2019). ::
+
+          $ tig 2.02..grub-2.04-rc1 -- grub-core/fs/zfs
+          ad4bfee 2019-04-08 07:24 +0200 VSe ∙ Change fs functions to add fs_ prefix
+          ca0a4f6 2013-11-20 02:28 +0100 VSe ∙ verifiers: File type for fine-grained signature-verification controlling
+          fa42786 2017-08-03 15:46 +0100 PBa ∙ zfs: remove size_t typedef and use grub_size_t instead
+
+
   rlaager's design would then work like this:
 
   * ESP (w/ ZFS driver) →
@@ -360,6 +387,13 @@ Arguments against initramfs-tools:
     This is caused by systemd, and systemd doesn't care, and #systemd believes it's not a big deal.
 
 
+Samba
+-----
+
+* How do we do ppolicy things (brute-force lockout, lock account, expire passwords) under Samba?
+* How do we make sure Samba is only using strong, salted hashed (e.g. SSHA2) for passwords?
+* What *is* the "sysvol"?
+
 
 References
 ==========
@@ -380,29 +414,12 @@ References
 * https://systemd.io/BOOT_LOADER_SPECIFICATION   # UPDATE: not really helpful.
 * https://www.freedesktop.org/wiki/Specifications/DiscoverablePartitionsSpec/  # This is what I thought the previous link was!!!
 
-  I have confirmed the EFIFS 1.3 uses grub-core's zfs.c almost at HEAD.
-  This is the commit of grub that efifs is using::
+Account management (LDAP, krb, DNS)
 
-      51be337 2018-04-16 22:36 -0700 NVi ∙ [HEAD] templates: Update grub script template files
+* https://wiki.samba.org/index.php/Active_Directory_Naming_FAQ
+* https://wiki.samba.org/index.php/Setting_up_Samba_as_an_Active_Directory_Domain_Controller
 
-  There are negligible differences between that and grub master::
 
-      twb@goll[grub]$ tig HEAD..master -- grub-core/fs/zfs
-      ad4bfee 2019-04-08 07:24 +0200 VSe ∙ Change fs functions to add fs_ prefix
-      ca0a4f6 2013-11-20 02:28 +0100 VSe ∙ verifiers: File type for fine-grained signature-verification controlling
-
-  There are negligible differences between that and the (earlier) 2.02 stable grub release::
-
-      twb@goll[grub]$ tig 2.02..HEAD -- grub-core/fs/zfs
-      fa42786 2017-08-03 15:46 +0100 PBa ∙ zfs: remove size_t typedef and use grub_size_t instead
-
-  2.02 is the version of grub in Debian buster.
-  There is a 2.04 release candidate at this time (Apr 2019). ::
-
-      $ tig 2.02..grub-2.04-rc1 -- grub-core/fs/zfs
-      ad4bfee 2019-04-08 07:24 +0200 VSe ∙ Change fs functions to add fs_ prefix
-      ca0a4f6 2013-11-20 02:28 +0100 VSe ∙ verifiers: File type for fine-grained signature-verification controlling
-      fa42786 2017-08-03 15:46 +0100 PBa ∙ zfs: remove size_t typedef and use grub_size_t instead
 
 
 IRC Logs
@@ -825,8 +842,6 @@ IRC Logs
     13:31 <pts0> mine just has 8
     13:31 <pts0> R720xd vs R720
     13:32 <pts0> I just have the R720
-    13:32 /dim pts0
-    13:32 *** DIM pts0 Ashenzari Henzell Sizzell Sequell Lantell Rotatell Eksell Cheibriados Gretell Kramell BTS zfs-bot nalpre EMIYA ladybird ldybrd ladybug ladybot ladyblurb mrscribe travis-ci Brainstorm Not-ba84 lubotu2 kenaan Svadilfari bbot2 feepbot curlbot zfs firebot pg_docbot pg_docbot crosbot zwiebelbot sd-bot sd-bot0 sd-bot1 sd-bot2 sd-bot3 sd-bot4 sd-bot5 sd-bot6 sd-bot7 32NAAB16X CIA- CIA-0 CIA-1 CIA-2 CIA-3 ChanServ Energon lpaste FBI GumbyPAN Jesdisciple KGB KGB-0 KGB-1 KGB-2 KGB-3 MentorSeeker birny checkbot cyber darcscommitbot darcswikibot dpkg dselect evalbot evil_twin factorbot fajita friendlyToaster fsbot fsbot` fsbot`` infobob ghcbot gitbot gitinfo GitHub157 GitHub106 greybot hgbot hpaste iwakura judd knoba lambdabot lamebot lisppaste lopbot pasteban perlbot pursuivant rudybot rudybot_ samba-bot sarahbot shadowpaste shbot shebang specbot tpg trungl-bot twiggz ubottu ubotu ubot2 ubot93 upstartbot uvirtbot uvirtbot~ uvirtbot` vpnHelper wikibugs IZBot Selvvir Not-63f6 logerritbot loircbot Nugs Not-c51b wrt Anaphaxeton Apic Buglouse average theos edgar-rft ManateeLazyCat MrSassyPants Roxyhart0 TheEvilPhoenix ^law^ a7a ams bazhang coldhead consolers coolack djszapi djszapi_ eagles0513875 eagles051387_ eagles0513875|2 eagles0513875| fix jaimef akkad joeoshawa jordanb jordanb_ kaushal notbrien tanasinn wolferz yates BlueOcean blass rockxloose rockxloose_ p0a rob_debian jeromelanteri epony RaycatRakittra Aethaeryn kenzo kenzo215 njsg Muimi Muimi1 iqubic Juesto bazhang Megabyte Shinigami-Sama sam_yan biffhero reisio Branes Calinou Captain_Crow CcSsNET John[Lisbeth] dorothyw johnnymacs Cheiron nunag rotorua tokeroa Devastator Error404NotFound Grum str1ngs LimCore Mgamerz WorstHumanEver Pikkachu RoyK RoyK^ antono atomx aurelien buu clint clint- cloneMX cluelessperson cluelessphone dominicdinada mpourhadi mpourhadi_ drake1 aeth fxiny haylo haylo_ heviarti heviarti_ icepick caffe j4jackj dvorakbot lich linocisco maroloccio maroloccio2 omeddragon pizzasauce rgr robottinosino ruben32 seanjohn silentwhisper xk05 |xk05| xk051 xorred thunk
     13:32 <pts0> So you think that card will work?
     13:33 <pts0> I can buy a more expensive one if it's better
     13:33 <jasonwc> you're right about the mini card
@@ -2208,3 +2223,83 @@ IRC Logs
     14:50 <twb> Isn't the whole point of not calling things "eth0" that this won't happen?
     14:50 <twb> I haven't physically reconfigured the host *at all*; it's had dozens of reboots today without the iface name changing
     14:55 <twb> After another reboot, it's back to enp11s0
+    15:01 <mingdao> I call mine eth0 and wlan0 and *never* have such a problem.
+    15:03 <twb> If I had >1 iface I would actually give them logical names like "upstream" and "dmz"
+    15:03 <twb> Using /etc/udev/rules.d/, because last time I tried to do it via .link files, it Just Didn't Work, and I gave up
+    15:03 <mingdao> twb: Just use net.ifnames=0 on your kernel command line and be done with this.
+
+2019-05-06 #apparmor::
+
+    15:05 <twb> Hey, on a Debian 10 install, why does "aa-status" say a bunch of stuff is in complain mode?  Is it just because the associated binaries don't exist?
+    15:26 <jjohansen> twb: debian chose to ship most profiles in complain mode, think of it as an intermediate step, that lets them try things without breaking people.
+    15:26 <jjohansen> users can put those profiles into enforce mode with aa-enforce
+    15:28 <twb> Righto
+
+2019-05-06 #ntpsec::
+
+    18:42 <twb> If I'm upgrading from ISC ntpd to ntpsec, other than ntp.conf moving into a subdir, are there any gotchas?  Nothing is jumping out at me in quick.html.
+    18:45 <twb> I really just need to grab NTP from au.pool.ntp.org (or an IP-capable GPS clock, when airgapped) and shove it out over the LAN where the systemd-timesyncd (SNTP) clients can see it.
+    18:46 <twb> Looks like in Debian 10, it's even auto-feeding ntp.conf from DHCP, out-of-the-box.  Yay.
+    19:35 <twb> no logarithmic scales on ntpviz? ;-)
+
+
+2019-05-06 #samba::
+
+    15:12 <twb> OK so I have an old server that was doing plain OpenLDAP + krbless NFSv3, with some ad-hoc scripts to let non-technical staff add and remove users.
+    15:13 <twb> I plan to replace that with samba's AD, because, basically, AD has "won".
+    15:15 <twb> Everything on the network is Linux, and I probably don't even need file sharing anymore.  I just need, like, PAM/NSS and apache to be able to auth off the AD accounts, and a recipe for adding and removing users and groups.
+    15:16 <twb> Am I silly to do it this way?  Last time I tried to hand-roll slapd+heimdall+nfsv4 was a huge failure, but that was a LONG time ago.
+    18:12 <twb> I have an existing split-horizon DNS, with a public hand-written zonefile, a bunch of DHCP client hostnames added via dnmasq, and a few copy-pasted into /etc/hosts so they're available during early boot (e.g. for firewall rules).  Would it make sense for my samba AD domain to be a subdomain?  I'm a bit nervous about samba being in charge of *all* DNS.
+    18:17 <twb> Aha, https://wiki.samba.org/index.php/Active_Directory_Naming_FAQ
+    18:24 <twb> How insane is it for my AD domain to be "invalid." ?  That's what I use in some other places for an internal-only domain that I can't be arsed actually buying to reserve it.
+    18:26 <twb> Aha, I just got to the part of that FAQ where it says "yes, twb, if your normal domain is example.com., then a subdomain ad.example.com. is probably the Best Thing"
+    18:31 <twb> Samba's DNS resolver is authoritative for the AD domain, and by default *also* recursive resolver for other domains.  How weird is it for me to turn that off, so that it'll only respond for the AD domain?  I prefer to have those jobs separate (like nsd3 + unbound, unlike bind), because when things go wrong, the errors are easier to understand.
+    18:37 <twb> Oh, cool, Debian's samba is using slapd's LMDB by default.
+
+2019-05-06 #zfsonlinux::
+
+    17:53 <sveinse> if using a vdev for special storage, are there any ballpark figures or guesses at how big this needs to be in relation to the main pool? I know it is dependent of the type of data stored, but should one scale the size of the special vdev? Any suggestions?
+    17:54 <fling> sveinse: you should probably try testing it for yourself.
+    17:54 <fling> sveinse: just create a pool for testing from files (on tmpfs) if you don't have your drives yet.
+    17:55 <twb> What is "special storage" ?
+    17:55 <fling> sveinse: try putting some data to the pool like 2% then 4% etc of your data to meassure what is the used space ratio between the special and general vdevs.
+    17:56 <fling> twb: metadata classes
+    17:56 <fling> sveinse: then you will know the sizes…
+    17:56 <sveinse> fling: sure, I will (once I get my old pool up and running again). This will be exact for the current data contents, but how does one generalize it into a guideline when the usage patterns might change?
+    17:56 <twb> How do you actually do it?   I don't see anything relevant in the zpool manpage.
+    17:57 <pink_mist> twb: which version?
+    17:58 <twb> 0.7.12  (https://manpages.debian.org/testing/zfsutils-linux/zpool.8.en.html)
+    17:58 <zfs-bot> [ zpool(8) — zfsutils-linux — Debian testing — Debian Manpages ] - manpages.debian.org
+    17:58 <twb> Although I actually have 0.8~rc4 in front of me
+    17:58 <sveinse> twb: it's a new feature of 0.8, where you can store the metadata of the pool in a separate vdev. I have a z2 pool with spin drives, and I plan to setup a mirrored nvme SSDs vdev for fast meta-data access
+    17:58 <twb> I see it in 0.8 yeah
+    17:58 <fling> sveinse: I don't think it is possible without knowing your needs. Imagine the difference between pool storing like 32M of hardlinks and a pool with 32TB of huge files and 16M recordsize
+    17:59 <fling> sveinse: the metadata storage needs difference would be huge!!
+    17:59 <sveinse> fling: yup, I was just curious if someone had a broad figure. Like 10% of the main pool or similar. But ok, thanks
+    17:59 <twb> fling: so let's work out a "typical" case of being a mail server, which should be an overestimate for most other uses
+    17:59 <fling> sveinse: also xattrs, small files on raidz, etc
+    18:00 <twb> 486GiB data, 13326082 inodes /var/mail
+    18:00 <twb> I suppose those numbers aren't enough to work it out...
+    18:00 <sveinse> What happens if the special vdev is full? Does it revert to using the main pool for storage, or it then the entire pool considered full?
+    18:00 <fling> sveinse: just have a single file and fill the whole pool with hardlinks. Then the data/metadata ratio will be exact filesize/(poolsize - filesize) :P
+    18:01 <sveinse> twb: you need to use zdb to list how large the metadata is
+    18:01 <twb> sveinse: you can't do some kind of rule-of-thumb estimate?
+    18:01 <fling> sveinse: I've not tried it myself yet. I started using cheap 60G ssd as cache devices for my raidz2 pools and got 10x performance improvements. Then I started using lots of ram and I don't need any cache anymore.
+    18:02 <twb> I'm thinking of basically mke2fs.conf's "inode ratio" settings
+    18:02 <twb> fling: is that instead of, or in addition to, l2arc and/or slog ?
+    18:03 <sveinse> twb: zdb -bbb pool apparently (never tried it myself yet)
+    18:03 <fling> twb: I replaced l2arc devices with more ram
+    18:03 <twb> fling: fair enough
+    18:05 <sveinse> My understanding is that this special feature is designed to fix the performance issues of raidz, especially to metadata. Since all metadata is stored at least twice on each drive, this becomes replicated a lot across the entire pool. So metadata access is mediocre on raidz, and the special vdev is supposed to alleviate that.
+    18:05 <twb> Is this "dedup allocation class" thing also new in 0.8?  Does that let you do dedup with a lot of SSD instead of a lot of RAM?
+    18:05 <sveinse> But this is second hand info, I'm not into the details of this
+    18:06 <twb> sveinse: logically only the metadata *writes* would be slow, and even then (surely?) not slower than regular blocks
+    18:08 <pink_mist> twb: yes
+    18:08 <twb> neato
+    18:08 <pink_mist> at least I'm 87% sure that's what it does :P
+    18:09 <pink_mist> so I guess I'm not certain
+    18:10 <sveinse> twb: In addition, changing metadata from slow spin drives to fast SSD will also contribute tremendously to performance
+    18:11 <sveinse> Thus I'm determined to this out on my home NAS and see if I get any noticable effects on the larger linux file trees
+    18:12 <twb> sveinse: I think you actually mean the seek time
+    18:14 <twb> Wow, that's weird.  These 8TB drives draw significantly more watts than 6TB or 10TB
+    18:15 <sveinse> twb: yes...
