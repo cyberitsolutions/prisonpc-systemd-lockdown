@@ -2201,4 +2201,10 @@ IRC Logs
     16:16 <MilkmanDan> Does unmounting all datasets modify any of the mount* properties?
     16:16 <MilkmanDan> I would expect not but I've never tested it.
     16:17 <jtara> I would hope that it would not
-    > 
+
+2019-05-06 #systemd::
+
+    14:49 <twb> Sigh.  My network interfaces have re-enumerated themselves, from enp11s0 to enp7s0, so the network didn't come up at all.
+    14:50 <twb> Isn't the whole point of not calling things "eth0" that this won't happen?
+    14:50 <twb> I haven't physically reconfigured the host *at all*; it's had dozens of reboots today without the iface name changing
+    14:55 <twb> After another reboot, it's back to enp11s0
