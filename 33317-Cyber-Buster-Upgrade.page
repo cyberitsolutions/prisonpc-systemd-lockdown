@@ -20,8 +20,8 @@ Checklist
 - **TODO** buy more **ECC** RAM for omega & omega-undertudy
 - **TODO** buy small SSDs for omega & omega-understudy (for SLOG ZIL, and *maybe* for L2ARC)
 
-- **TODO** get Debian 10 to boot with the rootfs on ZFS
-- **TODO** get Debian 10 to boot with /boot also on ZFS (i.e. make a ZFS EFI driver).
+- **DONE** get Debian 10 to boot with the rootfs on ZFS
+- **DONE** get Debian 10 to boot with /boot also on ZFS (i.e. make a ZFS EFI driver).
 
   This will let us give the *entire* disk to ZFS, and have just a simple refind-based ESP on a USB key.
   (We won't be able to use stock refind, we'd have to have a ZFS.EFI from somewhere else.)
@@ -317,6 +317,47 @@ How do we lay out the datasets in the ZFS pool?
 
   We might have called it "VMs" instead of "ZVOLs", but there's on
   (ESP backup) that isn't a VM, so... meh.
+
+
+initramfs-tools or dracut?
+--------------------------
+Both can be MADE to work.
+As at 2019-05-06, I (twb) am inclined to stick with initramfs-tools.
+
+Arguments against dracut:
+
+* initramfs-tools is the default on Debian and the best understood & supported by Debian people.
+* dracut is missing some hooks, so it might not reliably update the ESP version when it is rebuilt
+* dracut is missing some hooks, so it might not reliably rebuild itself when it should
+* dracut uses bash and coreutils (not busybox).  This makes the ramdisk bigger, slower, and builds less reliably.
+
+  Large parts of dracut are written as bash scripts, instead of by
+  "systemd-y".  The whole dracut stack internally looks at least as
+  unreliable and error-ignore-y as initramfs-tools.
+
+* dracut is supposed to include /etc/hostid, but our system seems to be buggy.
+
+  This means hostid must be manually passed by us using
+  dracut-zfs-specific "spl_hostid=0xFFFFFFFF" boot option.
+  I haven't been able to isolate the problem here.
+
+Arguments against initramfs-tools:
+
+* ZFS support lands in dracut first (for RH/Fedora people), and is then ported to initramfs-tools.
+* initramfs-tools doesn't use systemd, so anything "brought up" in the ramdisk might not hand over cleanly to systemd.
+
+  The obvious example would be zed.  I haven't checked yet, but it is
+  very likely that zed simply isn't started in the ramdisk by *EITHER*
+  ramdisk, meaning that any ZFS events during the zpool import and
+  rootfs mount don't trigger e.g. warning emails.
+  This is PROBABLY not a big deal, but I haven't explicitly asked #zfsonlinux about it yet.
+
+* initramfs-tools is missing /run/initramfs/shutdown support, so the ZFS pool is never fully exported during shutdown.
+
+  * Debian has a suggestion to fix this, but it's not well tested.  When I tried it, it didn't Just Work.
+  * The ZFS people say that "zfs export" really just updates hostid
+  * The inability to umount /var/log/journal during shutdown is an UNRELATED bug, which happens to EVERYONE that has separate / and /var/log filesystems.
+    This is caused by systemd, and systemd doesn't care, and #systemd believes it's not a big deal.
 
 
 
