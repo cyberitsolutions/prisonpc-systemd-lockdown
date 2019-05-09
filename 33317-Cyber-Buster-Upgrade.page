@@ -17,6 +17,8 @@ Checklist
   Alpha & Alpha-Understudy hardware remains undecided at this time.
   (Currently on sucky 3U whitebox servers.)
 
+- **TODO** make sure omega/omega-understudy/alpha/alpha-understudy are running EFI (not BIOS)
+
 - **TODO** buy more **ECC** RAM for omega & omega-undertudy
 - **TODO** buy small SSDs for omega & omega-understudy (for SLOG ZIL, and *maybe* for L2ARC)
 
@@ -28,6 +30,20 @@ Checklist
 
   This is not comforting:
   https://github.com/zfsonlinux/zfs/commit/7f35d649253c29da8852ae105980a86d8ee7ee2a
+
+- **TODO** how does the AD domain connect to our existing domain (esp. DNS)?
+- **TODO** should samba's DNS server have its caching resolver turned off?
+- **TODO** how do we manage users and groups in AD, from the CLI?
+- **TODO** how do we connect PAM/NSS to AD?
+- **TODO** how do we connect nginx (or apache) to AD?
+- **TODO** how do we nerf password guessing *in samba*, a la ppolicy, as defense-in-depth in case one of the downstream applications fails to nerf password guessing?
+- **TODO** add resource constraints and systemd lockdown and apparmor lockdown for EVERYTHING.
+- **TODO** do all the Cyber BCP things
+
+
+- **TODO** install apt-cacher-ng (instead of manually debmirroring),
+  and then use squid-deb-proxy-client on "all" the clients, so they
+  auto-discover _apt._tcp stuff from apt-cacher-ng on the LAN?
 
 
 
@@ -2303,3 +2319,95 @@ IRC Logs
     18:12 <twb> sveinse: I think you actually mean the seek time
     18:14 <twb> Wow, that's weird.  These 8TB drives draw significantly more watts than 6TB or 10TB
     18:15 <sveinse> twb: yes...
+
+2019-05-09 #cyber::
+
+    21:20 <twb> https://github.com/blechschmidt/freebind  --- LD_PRELOAD wrapper to make any daemon use IP_FREEBIND (i.e. so it works better with systemd)
+    21:22 <twb> The main use case I'm thinking of is new-omega is heading towards having *FOUR* dns servers on it
+    21:22 <twb> All of which want :53
+    21:22 <twb> (unbound, nsd3, samba, and systemd)
+
+2019-05-09 #debian-au::
+
+    19:53 <twb> pabs: so I was just trying apt-cacher-ng like you like
+    19:54 <pabs> how did it go?
+    19:54 <twb> pabs: it doesn't let me use https://deb.debian.org/ by default, because that requires TUNNEL which allows firewall bypass
+    19:54 <pabs> hmm, I'm using that
+    19:54 <twb> The other thing that confused me is I expected to add it to sources.list, not to apt.conf
+    19:55 <twb> root@not-omega:~# apt-config dump | grep Proxy ===> Acquire::http::Proxy "http://localhost:3142/";
+    19:55 <twb> Err:5 https://deb.debian.org/debian buster InRelease Invalid response from proxy: HTTP/1.0 403 CONNECT denied (ask the admin to allow HTTPS tunnels) [IP: 127.0.0.1 3142]
+    19:55 [pabs uses squid-deb-proxy-client instead of manually configuring that]
+    19:55 <twb> pabs: so you use squid *and* apt-cacher-ng at the same time? >_<
+    19:55 <pabs> no, just apt-cacher-ng
+    19:56 <pabs> squid-deb-proxy-client automatically looks up available proxies
+    19:56 <pabs> Acquire::http::ProxyAutoDetect "/usr/share/squid-deb-proxy-client/apt-avahi-discover";
+    19:56 <twb> ah so squid-deb-proxy-client isn't actually dependent on squid-deb-proxy
+    19:56 <pabs> nope, bit of a misnamed package :)
+    19:57 <pabs> it relies on an avahi lookup
+    19:57 <pabs> see /etc/avahi/services/apt-cacher-ng.service
+    19:57 <twb> So probably won't work inside chroots &c
+    19:58 <pabs> no, see auto-apt-proxy for that
+    19:58 <twb> it also means a rogue host on your switch segment can be a proxy that just says "no new updates to the debian-security repo", no?
+    19:59 <twb> That's the main FUD I have abou mdns/dnssd
+    20:00 <twb> Looks like auto-apt-proxy assumes the proxy is installed on either 127.1 or the default gateway (assuming you have exactly one default gateway)
+    20:01 <twb> So it will do the Wrong Thing for me where I have a small gateway host and a big storage/cpu/ram host, and the caches live on the latter
+    20:12 <twb> pabs: so *ANYWAY*, does that mean your apt-cacher-ng has the CONNECT backdoor enabled?
+    20:12 <twb> pabs: it appears to be "PassThroughPattern: .*" in etc/apt-cacher-ng/zz_debconf.conf
+    20:12 <pabs> thats commented-out here
+    20:13 <twb> So how is it doing https
+    20:14 <pabs> not sure...
+    20:15 <twb> haha /usr/lib/apt-cacher-ng/expire-caller.pl is an ELF
+    20:16 <themill> and that's why we don't use file extensions on binaries, boys and girls.
+    20:16 <twb> themill: nah nah nah obviously that's the Polska version
+    20:17 <twb> apt-cacher-ng also has a yukky thing where a cron job makes an HTTP request to apt-cacher-ng to say something like "hey do some cleanup now"
+    20:17 <themill> heh
+    20:18 <twb> Which is about as ugly as having * * * * * nobody wget http://localhost/cgi-bin/update-email.php
+    20:20 <twb> "apt update" NOP is actually 50% slower with apt-cacher-ng enabled :-)
+    20:24 <twb> Also weird: with a cold cache everywhere, "apt download firefox-esr" runs at 500kB/s with apt-cacher-ng, and at 1500kB/s without apt-cacher-ng
+    20:26 <twb> One minor benefit of using a full mirror, instead of any kind of "smart" proxy, is that hosts with file:// access to the mirror don't bother copying the files into /var/cache/apt before unpacking them
+    20:27 <twb> With a hot apt-cacher-ng cache, it downloads over loopback iface at around 10MB/s, which is "adequate", but not fantastic
+    20:28 <twb> It should be able to sustain closer to 150MB/s with the 7200RPM disks alone
+    20:29 <twb> Why is solr in debian so fucking old?
+    20:30 <Fudge> poke the maintainer
+    20:31 <twb> in debian it's 3.6 since 2013 or earlier; upstream it's version 8 or something
+    20:34 <twb> Maybe this time I should just use dovecot-lucene instead of dovecot-solr, EVEN THOUGH dovecot discourages it
+    20:35 <twb> When I talked to #dovecot last time about using solr 3 instead of solr 8, they noted that dovecot's solr backend hasn't been updated since 2013 either
+    20:35 <Fudge> wow
+    20:35 <Fudge> I liked dovecot when I used it
+    20:36 <twb> "lthough the fts-lucene plugin works, it's using CLucene library, which is very old and has some bugs."
+    20:36 <twb> So their actual criticism is that Lucene's C++ version is crapper than Lucene's Java version
+    20:37 <twb> Oho, someone has updated the dovecot wiki to know about solr 7 now
+    20:40 <twb> CLucene had a version in 2009, and a major new version in 2012, then nothing
+    20:41 <twb> The obvious conclusion is that it's "finished" and works perfectly!
+    20:46 <twb> Aha, #842706 (I was looking at the wrong bts page)
+    20:48 <twb> Also relevant: LibreOffice 6.1 is using C Lucene, so while it's bad, it's a badness *everyone* is exposed to
+    20:48 <twb> s/while/if/
+    20:50 <twb> CLucene 2.3 claims feature parity with Lucene 2.3; latest is Lucene 8
+    20:51 <twb> BLEHHHH
+    20:55 <twb> Correction: Libreoffice 5 uses clucene to search its help manuals.  LibreOffice 6.1 has no help browser; you have to install a GUI browser to view LO help now.  LO 6.1 appears to only use CLucene "compile" a search database for the browser to use, similar to what Sphinx does.
+    21:01 <twb> libclucene-core.so.1 is linked into a shitton of /usr/lib/libreoffice/program/*.so, so maybe they just link in things willy-nilly
+
+    21:42 <twb> Poking around systemd-nspawn for the first time; debspawn tries to use eatmydata and fails
+    21:43 <twb> Looks like that's just during early init though
+    22:06 <pabs> hmm, I should try that, need something with better isolation than pbuilder
+    22:06 <twb> Hey!
+    22:07 <twb> I have /lib -> /usr/lib, even though usrmerge isn't installed!
+    22:07 <twb> And so molly-guard was happy to be installed, even though maybe that's Super Bad, because it Conflicts: usrmerge?
+    22:07 <pabs> debootstrap does that IIRC, not sure if by default or was by default and is now not default
+    22:08 <twb> I assumed debootstrap did that *via* --include=usrmerge
+    22:09 <twb> "Merged /usr has been the default since debootstrap 1.0.85, reverted in 1.0.87 and re-enabled in 1.0.102."
+    22:09 <twb> It's super confusing that it's done by not marked by an installed package
+    22:09 <pabs> current merged usr implementations are such an ugly hack
+    22:10 <twb> It's turned off again in 1.0.111 per changelog
+    22:10 <twb> #914208
+    22:11 <twb> Ah it depends on --variant
+    22:11 <twb> I don't hugely care which I get, but I *do* care about things breaking under me
+    22:13 <twb> pabs: on ZFS, debspawn is using .tar.zst, which is dumb
+    22:16 <twb> I saw systemd-containers pulling in btrfs-tools, but I can't see where it's used yet
+    22:17 <twb> Wow, you can put something in fstab and systemd will run resize2fs on the block device every time it mounts it
+    22:19 <twb> What I'm **ACTUALLY** trying to do is work out how to have one service, such as nsd3, to have its own netns, that *includes a public address*
+    22:19 <twb> So that I can have e.g. unbound and nsd3 both just running, listening on 1.2.3.4:53 and 4.3.2.1:53, but neither can even see the other's iface
+    22:19 <twb> (let alone accidentally hijack it)
+    22:20 <twb> PrivateNetwork= is too narrow, and IPAddressDeny= is too loose.  systemd-nspawn doesn't seem to let me spin up *only* a netns; it needs a full chroot environment with a local initd and everything else
+    22:33 <twb> https://github.com/systemd/systemd/issues/4272  (re "systemd likes btrfs")
+    22:34 <twb> lennart's attitude is that "ZFS ain't mainline so we won't ever support it"
