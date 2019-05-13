@@ -1,4 +1,4 @@
-GOAL: Alpha and Omega are running Debian 10 Buster.
+-GOAL: Alpha and Omega are running Debian 10 Buster.
 
 
 Checklist
@@ -2411,3 +2411,77 @@ IRC Logs
     22:20 <twb> PrivateNetwork= is too narrow, and IPAddressDeny= is too loose.  systemd-nspawn doesn't seem to let me spin up *only* a netns; it needs a full chroot environment with a local initd and everything else
     22:33 <twb> https://github.com/systemd/systemd/issues/4272  (re "systemd likes btrfs")
     22:34 <twb> lennart's attitude is that "ZFS ain't mainline so we won't ever support it"
+
+2019-05-13 #debian::
+
+    17:19 <twb> "dpkg-reconfigure samba" doesn't prompt me for anything, but it says "Samba is not being run as an AD Domain Controller: Masking samba-ad-dc.service"
+    17:19 <twb> How do I actually become an AD DC?  I can't see anything about this on wiki.debian.org
+    17:20 <twb> Sigh, I see that's in TODO.Debian: "handle ad-dc stuff"  "have debconf question to configure ad dc"
+    17:21 <twb> Looks like that stuff was lots when samba 4.x moved out of experimental and became "the" samba
+    17:22 <twb> OK, the masking is happening in response to the content of smb.conf, so that part isn't too bad
+
+2019-05-13 #samba::
+
+    18:10 <twb> "samba-tool domain provision" doesn't understand diceware/xkcd-style passwords
+    18:11 <twb> For example, it does not consider this password to meet "quality" standards:
+    18:11 <twb> curse acclimate shock plank dubiously bullfight unworthy nibble railing dimmed backpedal coeditor
+    18:13 <twb> Hrm, it considers "ℵ₀≡∞⁺" to be less than 7 characters, so it will probably annoy people trying to use Chinese passwords, too (because it's assuming an ASCII-centric amount of entropy per Unicode codepoint)
+    18:17 <twb> hahaha, it won't even allow passwords generated via "xkcdpass|eleet", which look like "pr0b3 p05t3r d3b4t4bl3 w1ldf1r3 mu51c l3gg1ng5"
+    18:19 <twb> The samba wiki links to a MS Technet article that says you're not even allowed to use only Chinese; you HAVE TO use european digits and/or letters, or it isn't "complex" enough.
+    18:29 <twb> I wonder if the okina is considered "punctuation"
+    18:29 <twb> Unicode correctly places it in Lm category, so hopefully not
+    18:32 <haclusterer> did you consider spaces and quotes?
+    18:32 [twb grumpily gives up and resorts to slapping a "A0" on the end of a diceware password.]
+    18:33 <twb> haclusterer: spaces and quotes count towards the same category, according to that technet link
+    18:33 <twb> haclusterer: so I'd need a majuscule or a west arabic digit as well
+    18:34 <haclusterer> > pr0b3 p05t3r d3b4t4bl3 w1ldf1r3 mu51c l3gg1ng5
+    18:34 <haclusterer> you said this didn't work, do you know why?
+    18:34 <twb> Oh, actually you're right – it should have allowed that because latin minscules + west-arabic digits + spaces = 3 categories
+    18:35 <twb> It didn't tell me why, it just said "Administrator password does not meet the default quality standards."
+    18:35 <twb> I suppose I might have copy-pasted wrong or something
+    18:35 <haclusterer> are you sure it didn't only take the first word because of missing quotes for example?
+    18:36 <twb> I was typing it into the --interactive prompt
+    18:36 <twb> Funny story; I once set up a password on a system that turned out to be using plain crypt(3)
+    18:36 <haclusterer> what happens if you replace space with lets say underscore?
+    18:37 <twb> So it had silently discarded all but the first 8 bytes of my password, both on setup and on subsequent auth!
+    18:37 <haclusterer> that sounds... very bad
+    18:37 <twb> It was extremely racist, yeah
+    18:37 <twb> Because 8 bytes of UTF-8 is enough for like 1.8 chinese codepoints
+    18:38 <haclusterer> even worse in your case i guess
+    18:38 <twb> I'd do some more tests for you, but it was in the "samba-tool domain provision" prompt, and I'm scared to rerun it a couple of times
+    18:39 <haclusterer> never touch a running system^^
+    18:39 <twb> haclusterer: yeah, the way I discovered it was the password was along the lines of "let me in right now you bloody daft bugger", and changing the swear words still let me in
+    18:39 <twb> it's not a prod server, I just can't be arsed tearing down the domain again
+    18:40 <twb> Can I use o=Frobozz insteaad of dc=frobozz,dc=com,dc=au as my LDAP root?
+    18:40 <haclusterer> not that I am aware
+    18:41 <twb> Okey dokey
+    18:43 <twb> On plain slapd I also tend to not have *any* root bind pw, and instead just use -Y EXTERNAL.  That is, if I have root (uid=0 + gid=0) on the LDAP server, then I can bind as root.  Otherwise, I can't.
+    18:43 <twb> The obvious reason being, if I'm root on the server, I can just stop ldap (or smbd) and edit the files directly using my cap_sys_admin powers
+    18:44 <twb> Can I do the same thing on samba ad?  That way, there is no way anyone can EVER guess the root pind pw, because there simply isn't one.
+    18:50 <twb> Does Samba AD's built-in LDAP server support the sudo schema?
+    18:59 <twb> https://www.sudo.ws/readme_ldap.html  (the instructions for OpenLDAP are pre-cn=config)
+    19:02 <twb> Grmph, Debian's samba package strongly doesn't want me to be running AD *and* smbd/nmbd on the same host.  I guess if I want file sharing, I'll have to spin up a systemd container or some crap
+    19:06 <twb> After "samba-tool domain provision", "dpkg-reconfigure samba" (2:4.9.5+dfsg-3, Debian 10) masked out nmbd and smbd, but didn't *unmask* samba-ad-dc.service before trying to start it
+    19:07 <twb> If I unmask it by hand, it cracks the shits because it wants to bind to *:53 and systemd is already listenong in 127.53:53  ☹
+    19:09 <twb> That's second bit is my fault, though.  I want to end up with samba's DNS being authoritative-only (not recursive), and only binding on one address.  My caching recursive resolver will then be told to talk to samba DNS for the samba domain, and not for anything else.
+    19:10 <twb> (That way I can debug DNS issues with one or the other in isolation, and I can have different security profiles for recursive vs. authoritative)
+    19:23 <haclusterer> dude... on clue
+    19:23 <haclusterer> *no
+    19:23 <twb> no worries
+    19:24 <twb> It's nearly my bedtime anyways
+    19:25 <twb> Hrmph, after stopping & disabling resolved, samba-ad-dc still won't be my friend
+    19:25 <twb> http://ix.io/1IUg
+    19:26 <twb> resolv.conf is still pointing upstream, not at samba's DNS.  resolvconf isn't installed.  I guess the DHCP client did that, because I haven't patched it not to yet.
+    19:27 <twb> Gr, samba is logging to flat files instead of syslog by default
+    19:28 <twb> This looks pretty obviously bad:   /usr/sbin/winbindd: Failed to exec child - No such file or directory
+    19:28 <twb> "apt install windbind" and have another go.
+    19:29 <twb> Slightly grumpy that we *still* need lanman crap
+    19:29 <twb> OK, samba-ad-dc.service started!
+    19:29 <twb> "ss -ntlpad | cat" can see it binding to a heap of stuff
+    19:31 <twb> ldapsearch can connect, but can't do anonymous queries (which is expected).
+    19:32 <twb> "ldapsearch -xLLL -H ldapi:///var/lib/samba/private/ldapi" gives a funny error when it tries to guess the krb realm for that URL
+    19:35 <twb> smbclient -L is working
+    19:39 <twb> SRV queries to samba's DNS are working (e.g. kdig @127.1 srv _ldap._tcp.ad.cyber.com.au)
+    19:43 <twb> Trying to kinit with the klibc-utils implementation isn't working, so I guess I'll install libpam-krb5 and krb5-user...
+    19:44 <twb> wiki.samba.org hasn't heard of ntpsec yet :-(
+    19:47 <twb> OK bedtime, thanks for listening
