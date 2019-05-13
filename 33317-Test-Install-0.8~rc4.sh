@@ -134,7 +134,7 @@ debootstrap buster /tmp/delete-me || :  # usually fails
 rm -rf /tmp/delete-me
 
 debootstrap --include=ca-certificates buster /mnt         # FIXME: tweak args
-zfs set devices=off omega       # ????
+zfs set devices=off omega       # FIXME: this means "mount (most?) datasets with -o nodev"
 
 mount --rbind /dev  /mnt/dev
 mount --rbind /proc /mnt/proc
@@ -222,6 +222,8 @@ udevadm settle                  # wait for /dev to update
 mkfs.vfat -F32 -nESPOMEGA /dev/disk/by-id/"${SSDs[2]}"-part1
 install -dm0 /mnt/boot/efi      # NOTE: debootstrap should have already made /mnt/boot
 chattr +i /mnt/boot/efi         # If the ESP fails to mount, break, instead of writing into /boot filesystem.
+# systemd *sometimes* automounts EFI, and sometimes doesn't.  I have never understood how it decides.
+echo LABEL=ESPOMEGA /boot/efi/ vfat defaults 0 0 >>/mnt/etc/fstab
 
 refind-install --usedefault /dev/disk/by-id/"${SSDs[2]}"-part1
 mount /dev/disk/by-id/"${SSDs[2]}"-part1 /mnt/boot/efi
@@ -325,3 +327,28 @@ DNSSEC=no
 [DHCP]
 UseDomain=yes
 EOF
+
+
+chroot /mnt apt install etckeeper
+chroot /mnt apt install aptitude
+chroot /mnt apt install nocache
+chroot /mnt apt install apparmor apparmor-profiles apparmor-utils # libpam-apparmor libapache2-mod-apparmor
+chroot /mnt apt install ntpsec ntpsec-ntpdate
+##chroot /mnt apt install ntpsec-ntpviz gnuplot-nox gnuplot-qt-   # apache2-
+chroot /mnt apt install samba winbind smbclient libpam-krb5 krb5-user
+chroot /mnt apt install gitit pandoc texlive
+chroot /mnt apt install strace curl w3m wget wget2 squashfs-tools hdparm
+chroot /mnt apt install emacs-nox emacs-el elpa-debian-el elpa-devscripts elpa-systemd
+chroot /mnt apt install build-essential devscripts dpkg-dev pkgconf
+chroot /mnt apt install bash-completion
+chroot /mnt apt install postfix postfix-lmdb dovecot-imapd dovecot-lucene dovecot-sieve dovecot-managesieved dovecot-lmtpd
+chroot /mnt apt install systemd-cron cron-
+chroot /mnt apt install libnss-systemd libnss-myhostname libnss-resolve
+chroot /mnt apt install systemd-coredump
+chroot /mnt apt install knot-dnsutils
+
+
+## debspawn needs /dev/null to work in in /var/tmp/debspawn
+## root@not-omega:~/mg# zfs create -o devices=on omega/var/tmp/debspawn
+## root@not-omega:~/mg# debspawn create testing
+## root@not-omega:~/mg# debspawn create testing --mirror=http://apt.cyber.com.au/debian
