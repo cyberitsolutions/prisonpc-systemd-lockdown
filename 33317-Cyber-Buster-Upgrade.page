@@ -47,8 +47,8 @@ Checklist
 
 
 
-Plan
-====
+Plan / Overview
+===============
 * New-Alpha does networking stuff.
 
   * firewall, DNS, ntpsec, &c
@@ -409,6 +409,33 @@ Samba
 * How do we do ppolicy things (brute-force lockout, lock account, expire passwords) under Samba?
 * How do we make sure Samba is only using strong, salted hashed (e.g. SSHA2) for passwords?
 * What *is* the "sysvol"?
+* How do I put sudoers.ldap into the Samba LDAP schema?
+
+
+Containers (or not)
+-------------------
+* We want to constrain how much any given daemon can stomp on other daemons.
+* HOWEVER, we don't want to set up a full rootfs (inc. syslog, cron, apt, &c) for each daemon,
+  because we used to do that, and it still annoying overkill that required additional babysitting.
+
+* In particular, I want to have e.g. samba see only lo and eth0
+  interfaces, and nsd3 see only lo and eth1 interfaces.  Possibly
+  (probably!) instead of actual eth0 and eth1, they're virtual
+  interfaces that are all bridged to a single physical interface, and
+  each one only has a single IP address assigned to it.
+
+  (But... why?  The theory is that nsd3 spins up without any
+  privileges, so even if nsd3 is pwned, it can't simply steal
+  resources (inc. addresses) from other parts of the host.
+  Is this sensible?)
+
+* https://unix.stackexchange.com/questions/506441/why-does-systemd-nspawn-n-network-namespace-not-show-in-ip-netns-list
+  seems to say that regular netns aren't the same as whatever the fuck systemd-nspawn (systemd-containers) is doing.
+  My brain hurts!
+
+* MAYBE what they expect me to do is have like nsd3.service PrivateNetwork=yes, AND THEN create-iface-for-nsd3.service with JoinsNamespaceOf=nsd3.service ExecStart=/sbin/ip set dev eth0 netns SOMETHING ???
+
+  https://github.com/systemd/systemd/issues/2741  seems to be describing a similar setup (eventually).
 
 
 References
@@ -2485,3 +2512,307 @@ IRC Logs
     19:43 <twb> Trying to kinit with the klibc-utils implementation isn't working, so I guess I'll install libpam-krb5 and krb5-user...
     19:44 <twb> wiki.samba.org hasn't heard of ntpsec yet :-(
     19:47 <twb> OK bedtime, thanks for listening
+
+2019-05-14 #systemd::
+
+    16:17 <twb> OK so suppose I have a legacy PHP/Maria app that I want to jail, so that when it gets pwned, the attacker can't break anything else.
+    16:17 [b1tninja likes twb's ventures with systemd]
+    16:17 <twb> Plan B is qemu with kvm and virtio turned on.  Plan A is to use systemd's container/machined/nspawn stuff, similar to the old OpenVZ
+    16:18 <twb> My key goal here is that -- assuming (pretending) the attacker can't pwn the shared kernel --- there is no way for the pwned PHP user to mess with anything running outside the container.
+    16:18 <b1tninja> was going to suggest nspawn. I swear I recall some sort of inetdish functionality, use case was isolating ssh sessions
+    16:19 <b1tninja> let me see if I can dig that u
+    16:19 <twb> That includes things like "use up all the disk I/O so there is none left for ntpd"
+    16:19 <grawity> b1tninja: that's still just regular nspawn that's autostarted, isn't it
+    16:19 <twb> So my initial question is: what's the "starting point" manpage/doc that I should be reading?
+    16:19 <b1tninja> think it was yes
+    16:20 <grawity> I think there was an associated blog post about `systemd-analyze security <unit>`
+    16:20 <twb> ssh to regular users get their own slices by default, as long as you enable PAM in sshd
+    16:21 <twb> grawity: my systemd doesn't seem to have "systemd-analyze security" :-(
+    16:21 <twb> Oops.  typo.
+    16:22 <b1tninja> http://0pointer.de/blog/projects/socket-activated-containers.html wasnt the particular article but eh 
+    16:22 <twb> grawity: cool, that analyze security thing is SUPER HANDY.
+    16:22 <twb> I tested it on systemd-timesyncd.service, since that's pretty anal by default
+    16:22 <grawity> https://a.uguu.se/HBbQzlmC5kET.png most of my system is unhappy :(
+    16:22 <twb> By comparison, ntpsec.service is mostly BALLOT CROSSes
+    16:23 <grawity> well, they trust their own code that much
+    16:23 <twb> grawity: rather, it just means that whoever wrote their unit didn't know about all the "bonus" lockdowns that systemd can add
+    16:23 <twb> just like they don't have an apparmor profile yet
+    16:24 <twb> How come systemd-timesyncd doesn't have PrivateUsers=
+    16:25 <grawity> probably related to it having had DynamicUsers earlier, which Did Not Work Out
+    16:25 <b1tninja> does user locale maybe come into play too
+    16:26 <grawity> maybe it could have PrivateUsers= now that the latter has been disabled
+    16:26 <grawity> b1tninja: the system clock is not dependent on user locale
+    16:26 <twb> do you mean PrivateUsers + DynamicUsers didn't work out?  Or that the very idea of DynamicUsers was dumb?
+    16:26 <grawity> the latter
+    16:26 <twb> haha
+    16:26 <grawity> well, it's just that *I* think the very idea of DynamicUsers was dumb
+    16:26 <twb> I agree
+    16:26 <b1tninja> woah https://www.freedesktop.org/software/systemd/man/systemd.exec.html#SystemCallFilter= is cool
+    16:26 <twb> At least, I think it is a lot of risk for little benefit
+    16:26 <grawity> but for timesyncd, it was more about a core systemd service / an early boot service
+    16:27 <grawity> something about accidental loops, dependency on dbus, etc
+    16:27 <b1tninja> dnssec blocking timesync when hostnames require it is an annoyance I have currently
+    16:27 <grawity> and well, core systemd components just literally don't need a dynamic uid, so it was disabled
+    16:28 <grawity> ah yeah, the ntp <=> dnssec problem isn't limited to systemd, you can get it pretty much everywhere
+    16:28 <b1tninja> no chance someone knows how to downgrade dnssec when out of sync for timesync or something
+    16:28 <grawity> openbsd has a time-from-TLS thing, google has Roughtime
+    16:28 <b1tninja> presumably resolved has a way to allow dnssec for bootstrapping/resolving/verifying cert chains
+    16:28 <twb> → Overall exposure level for gpg-agent.service: 9.7 UNSAFE 😨
+    16:29 <grawity> twb: most of those options don't really work in per-user units, since AFAIK they're privileged operations
+    16:29 <twb> Fair point
+    16:29 <twb> systemd-analyze security $(systemctl list-units -t service | awk '/\.service/{print $1}') | grep Overall | sort -t: -nk2
+    16:29 <twb> Everything except systemd-* is 8.3 or higher
+    16:30 <grawity> (besides, gpg-agent is a secrets holder, it doesn't need to be contained from escaping but the other way around)
+    16:30 <twb> I'm curious if more pro-systemd distros like fedora and arch have stronger default there
+    16:30 <twb> grawity: contain ALL THE THINGS!  >rawr!<
+    16:30 <grawity> lol just run `systemd-analyze security | awk '{print $2}'`
+    16:30 <twb> Debian's package checker (lintian) is smart enough to complain if you provide a unit with no lockdown options
+    16:30 <twb> grawity: oh thanks.
+    16:31 <twb> grawity: I tried running it without arguments early on, but messed up
+    16:31 <grawity> arch does not modify upstream units unless it just doesn't work otherwise
+    16:34 <b1tninja> kvm would potentially seperate / isolate memory at a hw level in some cases, but more mgmt and resource usage, and attack surface i guess-- but usermode networking might be neat 
+    16:35 <b1tninja> id still opt for nspawn though
+    17:07 <Exec1N> Hi people. I'm trying to set up a timer to run every 48h but I can't make it work. OnCalendar=0/48:00:00 doesn't work and OnCalendar=48h doesn't either
+    17:07 <Exec1N> it always gives me this error Failed to parse calendar specification, ignoring: 48h
+    17:07 <Exec1N> how can I properly do this?
+    17:09 <b1tninja> 48h is 2 days
+    17:10 <twb> Exec1N: does daily/2 work?
+    17:11 <Exec1N> b1tninja: I know. twb: checking now
+    17:11 <twb> Note that OnCalendar= expects a calendrical value; if you want "every 48 hours from whenever you first started", that's something like OnActiveSec=
+    17:13 <twb> You might be able to say something like OnCalendar=*-*-*/2 0:0:0, to run on every odd day, but that will have unexpected effects on month edges
+    17:13 <twb> OnCalendar=Mon,Wed,Fri,Sun would likewise have edges
+    17:14 <Exec1N> Failed to parse timer value, ignoring: daily/2
+    17:14 <Exec1N> can I have seconds with step?
+    17:16 <twb> Exec1N: havey you looked at man systemd.time yet?
+    17:16 <Exec1N> yes
+    17:17 <Exec1N> but since 48h didn't work I was trying to get it working differently
+    17:18 <twb> I can't see a way to express what you want via OnCalendar
+    17:18 <b1tninja> damn 7 day weeks
+    17:18 <b1tninja> and non consistent days per month
+    17:18 <Exec1N> OnActiveSec also works for me as well
+    17:18 <b1tninja> perhaps could be done by calendar date vs day of month
+    17:18 <twb> The way cron solves this is simply
+    17:18 <twb> run always, then noop if it's the wrong value
+    17:19 <twb> you always have that as a plan B
+    17:19 <twb> e.g.
+    17:19 <twb> Description=[Timer] "24 0 8-14 * * root [ $(date +\%%w) -eq 0 ] && [ -x /usr/lib/zfs-linux/scrub ] && /usr/lib/zfs-linux/scrub"
+    17:19 <twb> OnCalendar=*-*-8,9,10,11,12,13,14 0:24:00
+    17:20 <twb> (And then the date = 0 check happens inside the ExecStart sh script)
+    17:23 <twb> OK so re my own questions, it looks like full containers that systemd "knows about" have their rootfs at /var/lib/machines/frobozz and you enable machines.target and systemd-nspawn@frobozz.service
+    17:24 <b1tninja> you could maybe bind ro parts of your system
+    17:24 <b1tninja> to avoid second install
+    17:24 <twb> and to customize the start options you edit /etc/systemd/nspawn/frobozz.nspawn
+    17:24 <twb> b1tninja: I tried that earlier and systemd-nspawn got really mad at me
+    17:24 <twb> b1tninja: it was all like "no you can't have / as your rootfs!"
+    17:25 <b1tninja> hm intersting
+    17:25 <b1tninja> maybe bind specific subs
+    17:25 <Exec1N> ok raw number of seconds worked for me
+    17:25 <twb> b1tninja: maybe if I do more complicated binding than just "whatever is on / already"
+    17:25 <b1tninja> i wonder if the utility path starts function checks empty string against empty string in that case
+    17:26 <twb> b1tninja: one of my straightforward goals is to have a host with one NIC, four static IP addresses, and systemd-resolved, nsd3, unbound, and samba DNS servers each binding to :53 on *one* of those IP addresses, and ideally not even able to see the other addresses
+    17:26 <b1tninja> wonder if you could have a refrence set like binds in your fstab under var lib machines
+    17:26 <b1tninja> and use that
+    17:26 <twb> b1tninja: PrivateXXX= are de-facto a list of bind mounts
+    17:27 <twb> b1tninja: for .exec units; I'm not sure about .nspawn stuff
+    17:27 <b1tninja> the localhost in ns is the one thing that was kinda a gotcha
+    17:27 <twb> b1tninja: apt install libnss-myhostname
+    17:27 <b1tninja> re net ns
+    17:27 <b1tninja> lo
+    17:27 <twb> b1tninja: that makes localhost always resolve, without any /etc/hosts
+    17:27 <twb> it's part of the systemd codebase
+    17:28 <b1tninja> was thinking for the container-host interactions
+    17:28 <b1tninja> if you were going to redirect/nat etc
+    17:31 <twb> b1tninja: the other annoying thing is that even though btrfs has lost and zfs has won, systemd nspawn/machinectl only have Bonus Magic for btrfs.  On the RFE, Lennart said it was because systemd will not support things that aren't in the mainline linux kernel.
+    17:32 <b1tninja> I have personal affliction with btrfs
+    17:32 <b1tninja> really like the nspawn unionfs stuff
+    17:32 <twb> I run both
+    17:33 <b1tninja> i had something to mention re the memory stuff but i totally forget
+    17:38 <LordDoskias> hello does libudev use some type of caching or it always queries /dev?
+    17:38 <twb> are systemd nspawn containers typically "full" containers, of the sort that debootstrap makes?  Or are they more like "just copy /usr/bin/httpd to /init and install the 10 libfoo.so files it needs, and NOTHING ELSE"
+    17:39 <twb> It seems like both kinds are more-or-less supported, but actually creating them is "out of scope" for the nspawn docs
+    17:39 <boucman> twb: they are meant to launch systemd, but they work well with light containers too
+    17:39 <boucman> yes creating them is out of scope 
+    17:39 <boucman> (I use buildroot for that)
+    17:40 <b1tninja> a generator for such a thing would be neat
+    17:40 <b1tninja> you've seen machinectl i assume
+    17:40 <boucman> buildroot is a generator for that, so is  yocto, so is debootstrap....
+    17:41 <boucman> (well, for the light version I 'm not sure debootstrap could do it)
+    17:41 <twb> debootstrap creates a relatively heavyweight container, though
+    17:41 <twb> It effectively ALWAYS requires apt inside the rootfs
+    17:41 <boucman> we are writing the necessary bits at my company to have BR generate portable containers right now
+    17:42 <twb> I think what I want is closer to how dracut and initramfs-tools build their ramdisks
+    17:42 <twb> Or not necessarily *want*, but at least asking about
+    17:43 <boucman> I won't blame you for not knowing what you want, the terms in the container space are a mess
+    17:43 <b1tninja> arch had a "mkarchroot"
+    17:44 <twb> My background is with hand-made lxc containers, libvirt or hand-made qemu kvm VMs, and hand-made squashfs live images
+    17:44 <boucman> I don't think any non-embedded distro have tools that can reliably make light containers... honestly I only know BR and docker that can do that, and docker's way is a tracability nightmare
+    17:44 <twb> I've avoided all the docker/rkt stuff because they don't seem to really have a handle on security yet
+    17:45 <b1tninja> i avoid it too, waiting for the container war to settle down
+    17:45 <twb> boucman: OK, I'll start with the one for making debian ramdisks that never switch_root ;-)
+    17:45 <boucman> honestry, try buildroot, it's really trivial to understand, and it works wonders
+    17:45 <b1tninja> this dudes tool was kind of neat https://github.com/tlahdekorpi/archivegen
+    17:45 <twb> boucman: isn't that the one you wrote yourself? ;-)
+    17:45 <boucman> huh ? no
+    17:45 <boucman> I never wrote any tool like that
+    17:45 <twb> Never mind, I must be thining of someone else.
+    17:46 <boucman> it's a classic, well established tool in the embedded world, it's been around for a decade or so IIRC
+    17:46 <twb> Oh, THAT one
+    17:47 <twb> I've used the OpenWRT equivalent before
+    17:47 <boucman> yes, but openwrt is very specialized, it really works well for routers only... I don't think it's the right tool for light containers
+    17:48 <twb> granted
+    17:49 <twb> Found it: https://packages.debian.org/buster/debirf
+    17:51 <b1tninja> something that maybe looked for executables under a path and grabbed shared libs would be nice
+    17:51 <twb> b1tninja: dracut does that :-)
+    17:51 <b1tninja> nice
+    17:52 <twb> The way dracut and (older) initramfs-tools basically work is you say "I need bash inside the rd" and it goes "OK, copy /bin/bash, and also anything mentioned in ldd /bin/bash"
+    17:52 <twb> Then if your bash has a security update, you just rebuild the ramdisk
+    17:52 <boucman> that gives you no tracability on what's on your system... I don't know your use-case, but I usually need to know exactly what's on my image for license/security reasons...
+    17:53 <twb> boucman: in my use case, the host OS and the container will be fed from the same repo, so I don't care
+    17:53 <boucman> ok
+    17:53 <twb> boucman: like, I'm not building a static "container image" and then carrying it off to another place to run it
+    17:53 <twb> It's more like dracut's "use whatever the host already has"
+    17:54 <twb> At least, that's ONE idea I'm CONSIDERING.
+    17:54 <b1tninja> ima have to play around with it more but i want a bind ro'd php env now =p so just update the system, but guess maybe legacy apps might want an old version
+    17:54 <twb> b1tninja: I have definitely done that 10 years ago with lxc
+    17:54 <b1tninja> wonder if there is like a follow symlinks dealio
+    17:54 <b1tninja> "flatten symlinks" etc
+    17:54 <twb> b1tninja: a straightforward case was something like "run dhclient with a netns but the same rootfs, then see if it gets a different IP address"
+    17:55 <b1tninja> client identifier ;p
+    17:57 <b1tninja> (systemd-firstboot --setup-machine-id) etc
+    17:57 <twb> yeah, these days you'd need to worry about all that crap
+    17:57 <b1tninja> wish they hadn't made client id the default >_>
+    17:58 <twb> Huh, debirf knows about systemd-networkd, so it can't be as old as I thought
+    17:59 <b1tninja> you saw --overlay and --overlay-ro
+    18:00 <twb> not yet
+    18:08 /join #archlinux
+    18:15 <killermoehre> twb: also looked at --volatile?
+    18:16 <twb> killermoehre: aha!
+    18:16 <twb> killermoehre: I have seen that before, long ago, and forgotten about it
+    18:17 <twb> Ah, I would have been looking at that in the context of live CDs, as an alternative to live-boot-initramfs-tools's union mounts
+    18:17 <b1tninja> and maybe shutdown /var =p
+    18:25 <twb> hahaha --kill-signal reminds me how every init has its own preferred signal for "let's turn off now"
+    18:26 <b1tninja> shutdown kills itself >_>
+
+2019-05-14 #debian-next::
+
+    14:46 <twb> On a fresh Debian 10 install with gnupg2 installed, "systemctl --user -t socket" shows that gpg-agent-ssh.socket is up and listening
+    14:46 <twb> but "ssh-add -l" can't see any agent running
+    14:46 <twb> What magical secret step am I missing?
+    15:01 <dwfreed> twb: you still have to set SSH_AUTH_SOCK, as the socket unit doesn't do that for you
+    15:01 <twb> ohhh
+    15:01 <dwfreed> https://wiki.archlinux.org/index.php/GnuPG#SSH_agent
+    15:02 <twb> isn't there some environment crap in systemd now to auto-do-that
+    15:02 <dwfreed> possibly
+    16:05 <twb> dwfreed: oh btw, libpam_env.so appears to be on by default, reading from the empty-by-default /etc/environment.  So in principle can just drop SSH_AUTH_SOCK in there
+    16:05 <twb> (I was thinking I'd have to either do the new systemd thing or the off-by-default ~/.ssh/environment thing)
+    16:08 <dwfreed> twb: it should also read ~/.pam_environment 
+    16:08 <twb> Righto
+    16:09 <twb> I think last time I looked, pam_env.so didn't support foo=$bar, so I just kept using .profile
+
+    18:00 <twb> What's the equivalent of molly-guard on a system with usrmerge?
+    18:06 <twb> Looking for package descriptions with things like "accident" doesn't find much
+    18:12 <dwfreed> just use an alias?
+    18:13 <twb> dwfreed: won't affect e.g. "sudo poweroff"
+    18:13 <pabs> does molly-guard not work on usrmerge systems?
+    18:13 <twb> pabs: Conflicts:
+    18:14 <twb> pabs: IIRC because the way it actually works is by putting itself first in $PATH
+    18:14 <twb> Can't do that if /usr and / are the same, because there is no first-er place
+    18:14 <dwfreed> you could make your own root path in sudoers
+    18:15 <pabs> sounds like it should be using diversions instead of PATH trickery
+    18:15 <dwfreed> and put /usr/local/sbin first :)
+    18:15 <twb> dwfreed: then it won't work if they ssh straight to root, or if they do something like "timeout 10m poweroff"
+    18:15 <twb> dwfreed: using /usr/local would probably work (except for dropbear SSH); the only reason molly-guard can't do that is because it's a .deb and isn't allowed to touch /usr/local
+    18:15 <dwfreed> twb: at that point there's not much you can do
+    18:16 <dwfreed> twb: one could also /sbin/poweroff
+    18:17 <dwfreed> molly-guard can always be bypassed (even more easily on systemd); you just have to decide what routes are acceptable to ignore
+    18:18 <twb> dwfreed: yeah the goal isn't to stop DELIBERATE bypass, but merely ACCIDENTAL bypass
+    18:19 <twb> sshing in as root and sshing in as nobody + sudo are both pretty common
+    18:19 <dwfreed> most accidental bypass isn't going to be using timeout :P
+    18:21 <dwfreed> yes, but you can do profile and sudoers changes to get /usr/local/sbin first in PATH and put a molly-guard equivalent there
+    18:22 <twb> I suppose
+    18:22 <twb> no turnkey thing for it tho
+    18:22 <twb> ("so write one yourself, twb")
+
+2019-05-14 #zfsonlinux::
+
+    12:36 <twb> What do you guys use instead of bonnie++ for a generic synthetic I/O benchmark
+    12:37 <dirtycajun> oh look at that i can run strace on the inside process outside the container. nifty
+    12:37 <dirtycajun> twb i use fio
+    12:37 <twb> Aha!
+    12:37 <twb> My brain kept saying "bio" which I knew was wrong
+    12:37 <twb> Huh, fio even has a bundled GUI now
+    12:37 <dirtycajun> jtara this is a short snippit from strace of rtorrent : https://bin.cajun.pro/raw/ahepugedew
+    12:40 <twb> Grmph, I can't see how to tell gfio "run ssh otherhost fio"
+    12:40 <dirtycajun> ive never used the gui so i have no idea there
+    12:41 <twb> I figured it would let me be lazy and not bother remembering how to drive gnuplot
+    12:42 <dirtycajun> ithe pattern is basically socket receive... socket receive... write. rinse repeat
+    12:43 <twb> I think gfio might work like xdu; you just pipe fio output into it
+    12:44 <twb> I also discovered that hdparm has a benchmark option (-t / -T)
+    12:45 <dirtycajun> yeah. not as safe to use tho
+    12:45 <twb> NOW they tell me!
+    12:45 <twb> 153MB/s sounds about right for these drives
+    12:53 <twb> a *ha*.  gfio doesn't take *any* arguments; you have to instead use File > Open to open a .fio (job description), and *then* it prompts you for a host to SSH into
+    12:56 <twb> So you don't do SSH at all, you ssh to your server and do "fio --server", which binds to 0.0.0.0:8765, then you open gfio on your craptop and file>open a .fio and then give it the server address
+    12:57 <twb> Then in the bottom-right you click "Connect" then "Send"  and it starts actually doing things
+    12:57 <twb> oh, and "Start Job"
+    12:58 <twb> Woo!
+    13:02 <gyakovlev> twb: found it! https://www.hamiltonshells.ca/zfs-iso/experimental/ <- with encryption support.
+    13:02 <zfs-bot> [ Index of /zfs-iso/experimental ] - www.hamiltonshells.ca
+    13:04 <twb> gyakovlev: cool
+    13:06 <twb> Now my only problem is I don't know offhand what a "herp derp I'm a small business server" is called in examples/*.fio
+    13:12 <dirtycajun> most of the tests are specific
+    13:13 <twb> Yeah I looked for something like "smb" or "smtp"; I'm poking through the docs now
+    13:15 <twb> Looks like the oldest examples are "1mbs_clients", "aio-read", "tiobench-example".
+
+2019-05-14 #gitolite::
+
+    14:35 <twb> Right now I just have a bunch of bare repos /srv/vcs/myproject.git/ that everyone has group write access to via SSH.  The only real annoyance is the umask is usually wrong, which I kludge with something like "@hourly chmod -r g+w /srv/vcs/*.git".
+    14:35 <twb> I'm looking at gitolite to avoid the crappy cron job.
+    14:36 <twb> But!  I have this one repo that isn't bare - the backend for my gitit wiki.  Can gitolite cope with non-bare repos?
+    16:47 <sitaram> twb: gitolite ignores non-bare repos
+    16:47 <sitaram> (as far as I remember)
+    16:48 <sitaram> it generally does not make sense to have access control and multiple people pushing to a non-bare repo anyway
+    16:49 <twb> Yeah agreed
+    16:50 <twb> I only do it because gitit is stupid and doesn't (or didn't) support bare repos
+    16:54 <twb> If you know of a different wiki that can do git + reST, with both git-based edits and web-based edits, I'll switch.  AFAIK the only other option is ikiwiki, which is mostly broken in reST mode.
+
+
+2019-05-14 #samba::
+
+    12:17 <twb> When samba AD stores passwords, does it use salted SHA-256, or what?
+    12:17 <twb> When I looked a long time ago, it was storing them in something weakass like unsalted MD5, for backcompat with NT4
+
+    12:21 <twb> OK so ldbsearch is basically samba's slapcat
+    12:23 <twb> There's no cn=config in there.  I can see the top object.  Can't see any operational attributes / rootbindpw crap.  Maybe that stuff lives in kerberos and not LDAP at all
+    12:27 <twb> Derp, I was doing -s base
+    12:30 <twb> Oh wow, --sorted!
+
+    13:28 <twb> Does samba have a recommended/preferred AD client side for GNU/Linux systems?
+    13:29 <twb> Like, if I set up samba (on linux) as the ad dc, do I make AD accounts visible to the linux host via pam/nss-ldap + krb, nss-winbind + ?, sssd, or what?
+    13:30 <Zombie> twb, sssd is better.
+    13:31 <twb> Zombie: how so?
+    13:31 <Zombie> sssd has an actual module, just for Samba 4 AD and manages KRB5 with PAM More reliably.
+    13:32 <twb> k
+    13:36 <twb> Weird.  Arch's wiki suggests winbind for AD, but SSSD for plain LDAP.
+    13:37 <Zombie> winbind is terribly incosistent.
+    13:37 <twb> I remember fighting winbind in the past
+    13:37 <twb> samba-ad-dc.service wouldn't even start until I installed winbind, though, so I've got the server side on the AD server :-(
+    13:43 <twb> I'm starting to wonder if I should just give up and not bother with samba at all.  Really all I want is the kerberization; my existing stack is just plain TLS'd slapd with ppolicy.
+    13:43 <Zombie> Explain what you want/
+    13:44 <twb> I guess what I was really going for was less minimalism and more "use standard stuff the standard way"
+    13:45 <twb> So that later on bolting on some random new thing is easier
+    13:48 <twb> but that means there's a lot of learning up-front and all the windowsy bits are yukky
+    13:55 <Zombie> Samba 4 can efffectively replace OpenLDAP.
+    13:55 <Zombie> and Heimdal Kerberos.
+    13:55 <Zombie> If you are willing to learn their idiosyncracies.
+    13:56 <twb> I realize that, but I already know how to drive plain openldap and samba ad is (relatively) huge
+    13:57 <twb> I was also doing (unkerberized) NFS, but I'm 99% sure I can avoid having any network filesystems in the new setup (except for HTTPS and SFTP)
+    13:57 <Zombie> Heimdal Kerberos has an issue that often pushes me over the edge.
+    13:57 <twb> I never got mit/heimdal krb working.  I've done a samba 4 ad dc before, but it was a pain
+    13:58 <Zombie> it often doesn't survive a reboot.
+    13:58 <Zombie> Samba 4 is more predictable.
+    14:17 <twb> I should also say that part of my YAGNI feeling is because this channel seems pretty dead, so I'm all like "maybe nobody even uses AD/SMB anymore, because everything is a phone and uses 1drv or gdrive"
+
+2019-05-14 #mailman::
+
+    14:07 <twb> Can I run mailman without any passwords at all, so that all actions have to be done by a privileged user on the mailman server itself?
