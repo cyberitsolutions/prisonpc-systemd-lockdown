@@ -335,7 +335,7 @@ chroot /mnt apt install nocache
 chroot /mnt apt install apparmor apparmor-profiles apparmor-utils # libpam-apparmor libapache2-mod-apparmor
 chroot /mnt apt install ntpsec ntpsec-ntpdate
 ##chroot /mnt apt install ntpsec-ntpviz gnuplot-nox gnuplot-qt-   # apache2-
-chroot /mnt apt install samba winbind smbclient libpam-krb5 krb5-user
+chroot /mnt apt install samba winbind smbclient libpam-krb5 krb5-user ldb-tools
 chroot /mnt apt install gitit pandoc texlive
 chroot /mnt apt install strace curl w3m wget wget2 squashfs-tools hdparm
 chroot /mnt apt install emacs-nox emacs-el elpa-debian-el elpa-devscripts elpa-systemd
@@ -346,6 +346,8 @@ chroot /mnt apt install systemd-cron cron-
 chroot /mnt apt install libnss-systemd libnss-myhostname libnss-resolve
 chroot /mnt apt install systemd-coredump
 chroot /mnt apt install knot-dnsutils
+chroot /mnt apt install gitolite3
+chroot /mnt apt install gnupg2 tig
 
 
 ## debspawn needs /dev/null to work in in /var/tmp/debspawn
