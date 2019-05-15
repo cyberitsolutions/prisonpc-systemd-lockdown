@@ -115,6 +115,8 @@ Plan / Overview
     Question: do they run when the user isn't logged in?
     e.g. overnight alloc submission job?
 
+  * nut (upsd)
+
 
 How do we boot ZFS?
 -------------------
@@ -410,6 +412,62 @@ Samba
 * How do we make sure Samba is only using strong, salted hashed (e.g. SSHA2) for passwords?
 * What *is* the "sysvol"?
 * How do I put sudoers.ldap into the Samba LDAP schema?
+
+Ansible / Configuration Management
+-------------------------------------
+
+2019-05-15 #emacs::
+
+    13:46 [twb gives up on ansible again after a record minimum time!]
+    13:51 <dale> twb: Ha
+    13:51 <dale> twb: Replacement?
+    13:51 <twb> ugggggggh
+    13:52 <parsnip> ansible is too fast?
+    13:54 <twb> ansible is too overwhelming
+    13:55 <dale> I've spent so much damn time with it that I no longer have a good perspective on that.
+    13:55 <twb> I pretty much just want to start with "apt install <list>", then rsync across <these files>
+    13:56 <twb> Even the basic ansible examples have like 50 files across 10 dirs
+    13:56 <twb> Reminds me of ROR
+    13:57 <dale> Yeah, figuring out how to organize everything according to their "best practices" has always seemed murky to me.
+    14:00 <twb> I want an example that isn't "best practice" but will at least *do something* straight away
+    14:00 <twb> Also the fact that all their playbooks do "yum:" is pretty un-generic
+    14:18 <dale> twb: I think this would work but I totally didn't test it: http://ix.io/1J5m
+    14:26 <twb> dale: thanks
+    14:28 <twb> dale: that looks pretty close to where I was when I gave up
+    14:28 <twb> dale: the other thing is I was trying to run it on localhost without sshing from localhost to localhost
+    14:28 <twb> dale: which Just Works when using the secret hidden built-in "localhost", but not if you define a host called "localhost"
+    14:29 <dale> twb: There's a thing for that, hang on
+    14:29 <twb> That's how I used to use puppet, long long ago
+    14:30 <dale> twb: Try putting "localhost ansible_connection=local" in that hosts.ini.
+
+Put these (ansible.cfg, hosts.ini, site.yaml) in a directory and run::
+
+    ansible-playbook --check site.yml      # test
+    ansible-playbook         site.yml      # do it for real
+
+site.yaml::
+
+    - hosts: all
+      tasks:
+        - name: Install some stuff
+          apt:
+            name: emacs24, emacs25, emacs26
+            state: present
+
+        - name: rsync some stuff
+          synchronize:
+            src: some/local/dir
+            dest: path/on/the/remote
+
+ansible.cfg::
+
+    [defaults]
+    inventory = hosts.ini
+
+hosts.ini::
+
+    your.host.com
+
 
 
 Containers (or not)
@@ -1206,7 +1264,7 @@ IRC Logs
     19:33 [twb waves the RMCH paper around grumpily]
 
     19:41 <twb> X: zfsutils-linux: missing-systemd-timer-for-cron-script etc/cron.d/zfsutils-linux
-    19:41 <twb> 24 0 8-14 * * root [ $(date +\%w) -eq 0 ] && [ -x /usr/lib/zfs-linux/scrub ] && /usr/lib/zfs-linux/scrub  # Scrub the second Sunday of every month.  
+    19:41 <twb> 24 0 8-14 * * root [ $(date +\%w) -eq 0 ] && [ -x /usr/lib/zfs-linux/scrub ] && /usr/lib/zfs-linux/scrub  # Scrub the second Sunday of every month.
     19:41 <twb> That looks pretty straightforward...
     19:42 <twb> zfs-scrub.timer: [Timer] OnCalendar=Sun/2 *-*-*
     19:43 <twb> zfs-scrub.service: [Service] Type=oneshot ExecStart=/usr/lib/zfs-linux/scrub
@@ -1414,7 +1472,7 @@ IRC Logs
     12:49 <CompanionCube> iirc the way apple normalizes things does indeed suck
     12:49 <twb> CompanionCube: so basically the way ZFS does it, doesn't have the same problem?
     12:51 <WrongDevice> hello
-    12:51 <WrongDevice> This pool uses the following feature(s) not supported by this system: 	org.zfsonlinux:userobj_accounting 	org.zfsonlinux:project_quota
+    12:51 <WrongDevice> This pool uses the following feature(s) not supported by this system:   org.zfsonlinux:userobj_accounting       org.zfsonlinux:project_quota
     12:51 <WrongDevice> i can disable those ?
     12:51 <WrongDevice> without recreate the zpool ?
     12:52 <WrongDevice> im trying to mount my zpool created with ZOL 0.8.0-rc4
@@ -2087,7 +2145,7 @@ IRC Logs
     15:01 <pronoun> especially when lvm/luks/dm are involved
     15:03 <grawity> that's specifically what it is made for, so hopefully yes
     15:03 <pronoun> unmount.c btw was recently modified to use libmount and cleaned up to better support containers and unmounting of stuff no longer using /proc/self/mounts
-    15:04 <pronoun> was looking at that last night... 
+    15:04 <pronoun> was looking at that last night...
     15:06 <twb> AFAIK this problem affects systemd more than pre-systemd because journald just *will not ever shut down*, so it holds open your rootfs
     15:06 <pronoun> still seemed to sigtem/kill itself before things fully unmonuted though =/ /proc /dev /sys were ignored but didnt see any handling for var log/journald let me find that issue
     15:06 <twb> Whereas on a pre-systemd system, rsyslogd or busybox syslogd is just a regular program and it's killed off early on, and doesn't auto start up again
@@ -2117,7 +2175,7 @@ IRC Logs
     15:15 <pronoun> yeah but thats fs level, who knows about the backing
     15:15 <pronoun> in case of lvm for instance or luks
     15:15 <twb> yeah
-    15:15 <pronoun> https://github.com/systemd/systemd/commit/874d3404cbf2363604106c8f86683db4082691ea#diff-a55dd3f995e0ee0a2ba83f24f9492eebR381 
+    15:15 <pronoun> https://github.com/systemd/systemd/commit/874d3404cbf2363604106c8f86683db4082691ea#diff-a55dd3f995e0ee0a2ba83f24f9492eebR381
     15:15 <grawity> and just to clarify it, the shutdown pivot happens as the very last step (in place of powering off), so it won't fix [FAIL]s that systemd-main shows
     15:15 <twb> I haven't noticed any actual data loss with a conventional md RAID1 + LVM + ext4 rootfs
     15:16 <twb> grawity: thanks; understood
@@ -2137,7 +2195,7 @@ IRC Logs
     15:21 <twb> pronoun: yeah there's two separate whinges here: 1. (important) data loss because no /run/initramfs/shutdown means complicated storage backends aren't torn down cleanly; and 2. (minor) you shouldn't get "FAIL" messages on working systems, because it's bloody scary
     15:22 <pronoun> they mention network fs, virtual fs, containers and stuff in the comments of unmonut.c
     15:22 <twb> I wonder if nobody has fixed this because "normal" users have plyouth splash and so don't see the errors
-    15:22 <pronoun> but i swear systemd-shutdownd is killing itself before some of this code is run 
+    15:22 <pronoun> but i swear systemd-shutdownd is killing itself before some of this code is run
     15:22 <grawity> "normal" users have /var/log/journal on rootfs, I guess
     15:23 <twb> grawity: that wouldn't help though, would it?  You'd just get [FAIL] Unmount /
     15:23 <twb> Unless maybe / is handled specially
@@ -2529,7 +2587,7 @@ IRC Logs
     16:20 <twb> ssh to regular users get their own slices by default, as long as you enable PAM in sshd
     16:21 <twb> grawity: my systemd doesn't seem to have "systemd-analyze security" :-(
     16:21 <twb> Oops.  typo.
-    16:22 <b1tninja> http://0pointer.de/blog/projects/socket-activated-containers.html wasnt the particular article but eh 
+    16:22 <b1tninja> http://0pointer.de/blog/projects/socket-activated-containers.html wasnt the particular article but eh
     16:22 <twb> grawity: cool, that analyze security thing is SUPER HANDY.
     16:22 <twb> I tested it on systemd-timesyncd.service, since that's pretty anal by default
     16:22 <grawity> https://a.uguu.se/HBbQzlmC5kET.png most of my system is unhappy :(
@@ -2570,7 +2628,7 @@ IRC Logs
     16:30 <twb> grawity: oh thanks.
     16:31 <twb> grawity: I tried running it without arguments early on, but messed up
     16:31 <grawity> arch does not modify upstream units unless it just doesn't work otherwise
-    16:34 <b1tninja> kvm would potentially seperate / isolate memory at a hw level in some cases, but more mgmt and resource usage, and attack surface i guess-- but usermode networking might be neat 
+    16:34 <b1tninja> kvm would potentially seperate / isolate memory at a hw level in some cases, but more mgmt and resource usage, and attack surface i guess-- but usermode networking might be neat
     16:35 <b1tninja> id still opt for nspawn though
     17:07 <Exec1N> Hi people. I'm trying to set up a timer to run every 48h but I can't make it work. OnCalendar=0/48:00:00 doesn't work and OnCalendar=48h doesn't either
     17:07 <Exec1N> it always gives me this error Failed to parse calendar specification, ignoring: 48h
@@ -2631,7 +2689,7 @@ IRC Logs
     17:38 <twb> are systemd nspawn containers typically "full" containers, of the sort that debootstrap makes?  Or are they more like "just copy /usr/bin/httpd to /init and install the 10 libfoo.so files it needs, and NOTHING ELSE"
     17:39 <twb> It seems like both kinds are more-or-less supported, but actually creating them is "out of scope" for the nspawn docs
     17:39 <boucman> twb: they are meant to launch systemd, but they work well with light containers too
-    17:39 <boucman> yes creating them is out of scope 
+    17:39 <boucman> yes creating them is out of scope
     17:39 <boucman> (I use buildroot for that)
     17:40 <b1tninja> a generator for such a thing would be neat
     17:40 <b1tninja> you've seen machinectl i assume
@@ -2705,7 +2763,7 @@ IRC Logs
     15:02 <dwfreed> possibly
     16:05 <twb> dwfreed: oh btw, libpam_env.so appears to be on by default, reading from the empty-by-default /etc/environment.  So in principle can just drop SSH_AUTH_SOCK in there
     16:05 <twb> (I was thinking I'd have to either do the new systemd thing or the off-by-default ~/.ssh/environment thing)
-    16:08 <dwfreed> twb: it should also read ~/.pam_environment 
+    16:08 <dwfreed> twb: it should also read ~/.pam_environment
     16:08 <twb> Righto
     16:09 <twb> I think last time I looked, pam_env.so didn't support foo=$bar, so I just kept using .profile
 
@@ -2776,6 +2834,14 @@ IRC Logs
     16:50 <twb> I only do it because gitit is stupid and doesn't (or didn't) support bare repos
     16:54 <twb> If you know of a different wiki that can do git + reST, with both git-based edits and web-based edits, I'll switch.  AFAIK the only other option is ikiwiki, which is mostly broken in reST mode.
 
+    19:31 <Habbie> twb, github appears to run a fork of gollum for the wikis - i don't know if that is helpful
+    19:32 [twb looks]
+    19:35 <Habbie> markdown, rdoc
+    19:35 <Habbie> oh, rest plugin
+    19:35 <twb> yeah gollum is ruby so it forks out to python2 docutils for the rest
+    19:36 <twb> (for comparison, gitit is basically pandoc, so it's all in-haskell, using a competing rest implementation)
+    19:36 <twb> I could *almost* just convinced $work to not allow browser-based edits anymore, and then just use sphinx + a commit hook.  Almost.
+    19:54 <twb> https://dataswamp.org/~solene/2016-05-17-9.html  is someone else having the same problem with gitit
 
 2019-05-14 #samba::
 
@@ -2816,3 +2882,97 @@ IRC Logs
 2019-05-14 #mailman::
 
     14:07 <twb> Can I run mailman without any passwords at all, so that all actions have to be done by a privileged user on the mailman server itself?
+
+2019-05-15 #zfsonlinux::
+
+    16:23 <twb> OK, I have a stupid problem.  I have a "set up tree at /path/to/foo/" program.  I want /path/to/foo/ to be a separate dataset.  If I "zfs create" first, the setup program complains because foo/ exists.  If I run the setup program first, /path/to/foo is (initially) on the wrong dataset, and any snapshots made before I move it will be annoying.
+    16:23 <twb> Is there a standard answer to this class of problem?
+    16:24 <twb> I suppose a "90% right" answer would be to tell setup to run at /path/to/foo/foo (so it's always on the right dataset), then "mv * .." to remove the indirection
+    16:29 <DeHackEd> depending on what you're up to, make /path/to/ a dataset ?
+    16:29 <twb> it's already a dataset, but with canmount=no
+    16:30 <twb> The specific case is /var/lib/machines/myfirstcontainer  being spun up by systemd's machinectl install-tar (which AFAICT is basically "tar xf")
+    16:30 <twb> So plan B is actually to just use tar directly
+    16:30 <freqlabs> I'd tend to use symlinks to get the paths I want, like a dataset /path/to/foo-private, setup creates /path/to/foo-private/foo, add symlink /path/to/foo -> /path/to/foo-private/foo
+    16:30 <twb> freqlabs: hum, or a bind mount, at that point
+    16:31 <freqlabs> symlink seems like way less overhead but whatever suits you
+    16:31 <twb> fair enough
+    16:32 <twb> hahaha
+    16:32 <twb> machinectl import-tar doesn't understand compressed tarballs
+
+2019-05-15 #systemd::
+
+    15:15 <twb> When using systemd-networkd with a static config (instead of DHCP), does networkctl consider the link "configured" as soon as the static config is spun up?
+    15:15 <twb> Or does it also check for, like, there being a switch on the other end of the cable, and that the gateway is reachable
+
+    16:25 <twb> does "machinectl import-tar" do anything other than tar -x ?
+    16:37 <twb> the source in machined-core.c is hard to follow
+    16:37 <twb> It appears to just be doing "tar - < foo.tar"
+    16:38 <twb> debspawn creates a running container directly using systemd-nspawn.  machinectl can see it.  machinectl can't clone it.  Why not?
+    16:39 <twb> http://ix.io/1J5R
+    16:48 <twb> What's the equivalent of "systemctl show" for a .nspawn?
+    16:48 <twb> "machinectl show" seems to work, as long as the container is actually running
+    16:49 <twb> it doesn't list all the fun stuff in the .nspawn though
+    17:30 <robert_> huh
+    17:35 <robert_> twb: https://gist.github.com/f1fa2ce46ac5af0732014ac6d2d1d1a4
+    17:39 <twb> Can I configure how quickly StopWhenUnneeded= gives up?
+    17:48 <twb> GRARGH.  I'm trying to use https://github.com/systemd/systemd/issues/2741  to constrain nsd.service
+    17:49 <twb> nsd.service needs PrivateTmp=yes, or it crashes.
+    17:49 <twb> netns@.service needs PrivateTmp=no, or it crashes.
+    17:49 <twb> nsd.service JoinsNamespaceOf=netns@foobar.service is therefore not possible!
+    17:51 <twb> My end goal is to run unbound.service and nsd.service, each with a private network that can see eth0 but only one address on eth0.
+    17:51 <twb> (Which might be a very silly thing to want; I'm not sure yet)
+    17:53 <twb> I suppose what I could do is ExecStart=! for the netns@ lines...
+    17:56 <twb> That's just making ip(8) core dump :-(
+    17:58 <twb> It's =+ not =! now, but PrivateTmp still affects those
+    17:58 <twb> So... blech
+    18:12 <boucman_work> twb, I think there is a type of virtual device you could use for that, rather than assigning multiple IP to eth0, you make multiple interfaces all of which ar physically on eth0
+    18:12 <boucman_work> and then you give one interface to each NS
+    18:14 <boucman_work> (and to answer your question, this is more a support channel than a dev channel, you'd better redirect that question to the mailing list and/or github, the core systemd devs are more active there)
+    18:14 <twb> boucman_work: do you know how to actually "give" an interface to a namespace?
+    18:14 <twb> boucman_work: I suspect that if I don't care about "named" netns's (for ip netns xxx), I can bring up the ifaces/addresses via systemd.netdev.  But I don't really know what I'm doing here.
+    18:14 <boucman_work> twb, with "ip" yes... there is also a nspawn parameter for that.... for a service, I'm not sure.
+    18:15 <boucman_work> named netns is an ip thing, not a kernel thing iirc, but network is not my forte...
+    18:16 <twb> boucman_work: I agree re named netns
+    18:17 <twb> "ip link add veth-twb type veth" does... something
+    18:25 <boucman_work> the notify socket is passed from the host systemd to the container systemd, so the container systemd will pet the host-systemd, which in turn pets the hardware watchdog
+    18:26 <boucman_work> which also means that the status of containers is properly followed. While the container-systemd is booting, the host-systemd will mark it as starting and only when the container-systemd reports that it is ready will the host-systemd mark the service as ready
+    18:27 <boucman_work> so syncing with After= on containers will work as expected
+    18:28 <boucman_work> yes and no
+    18:30 <twb> boucman_work: OK so what the guys in that issue seem to be doing is creating two "veth" ifaces, which are basically two fake ethernet ifaces glued together.
+    18:30 <twb> boucman_work: then on the outside, they bridge/nat/tunnel/whatever veth-OUTSIDE@veth-INSIDE to en0
+    18:31 <twb> boucman_work: then on the inside, they add 1.2.3.4/24 and 0/0 via 1.2.3.1 to veth-INSIDE@veth-OUTSIDE
+    18:31 <boucman_work> systemd-nspawn implements it (systemd-nspawn is very systemd-aware) but it's "just" about passing an opened socket to the container-init+setting an environment variable
+    18:31 <twb> *I think*
+    18:31 <twb> boucman_work: yeah but nspawn expects an entire container, not just 1 or 2 services
+    18:31 <boucman_work> both of which are already passed/set by systemd
+    18:32 <twb> It's not clear to me how I can say "dear nspawn, please run nsd.service with these nspawn options"
+    18:32 <boucman_work> twb, I was answering auxloop (which has a full container iiuc)
+    18:32 <twb> oh sorry
+    18:32 <boucman_work> np
+    18:33 <boucman_work> twb, for you, veth are probably not the right type of virtual interfaces, they create a pair of connected interfaces, but they are not linked to a "real HW" interface...
+    18:34 <boucman_work> but there are so many types of virtual interfaces in linux that I'm not sure what would be the right one... I know it exists, but I don't know what it's called
+    18:35 <twb> systemd.netdev has a list
+    18:36 <twb> ipvlan maybe
+    18:36 <boucman_work> yeah, that sounds about right
+    18:36 <boucman_work> test it manually first, though
+    18:37 <twb> Even if I spin that up in systemd-networkd, I don't see how to "share" it into the PrivateNework='d .service
+    18:39 <twb> Oh wow, LogLevelMax= is new and cool
+    18:40 <twb> (since v215)
+    18:40 [Xogium blinks]
+    18:40 <Xogium> so its not that new :p
+    18:41 <twb> v215 was the last time I went through *every* option in systemd :P
+    18:42 <Xogium> hahahah I do it at every release
+    18:43 <twb> AppArmorProfile= says the profile "must already be loaded into the kernel".  Does systemd implicitly add an After= on the units that set up apparmor profiles?  The manpage doesn't say so.
+    18:47 <boucman_work> I'd say "try and see what happens :) )
+    18:48 <twb> from RTFS, it doesn't look like it
+    18:48 <boucman_work> but having systemd pet systemd would probably have more chance to be upstreamed than implementing a different watchdog mechanism...
+    18:48 <twb> So on a "normal" system, I guess if AppArmorProfile=usr.bin.foo is used, I have to also add Requires= and After= on ... apparmor.service, I guess
+    18:50 <grawity> boucman_work: huh, it seems like a feature that should have been there the whole time
+    18:50 <grawity> twb: only if your unit has DefaultDependencies=no
+    18:50 <grawity> because apparmor.service does have this option and Before=sysinit.target, while normal services are after sysinit
+    18:51 <twb> grawity: ah, good catch
+    18:51 [grawity thought apparmor profiles are selected automatically based on the executable name]
+    18:52 <boucman_work> grawity, it might be already there (that was my understanding) but I am not sure, so I can't be very affirmative about it
+    18:56 <twb> grawity: yeah but that only applies to the main binary, I think
+    18:56 <twb> grawity: I think the idea is that if you use AppArmorProfile= it can lock down all the ExecStartPre= crap
+    18:56 <twb> grawity: that's just a guess, though
