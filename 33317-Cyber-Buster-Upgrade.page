@@ -2976,3 +2976,59 @@ IRC Logs
     18:56 <twb> grawity: yeah but that only applies to the main binary, I think
     18:56 <twb> grawity: I think the idea is that if you use AppArmorProfile= it can lock down all the ExecStartPre= crap
     18:56 <twb> grawity: that's just a guess, though
+
+    19:50 <twb> Where do you set blackhole routes for private-use address ranges in systemd-networkd?
+    19:50 <twb> This is how I used to do it: http://ix.io/1J6E
+    19:51 <grawity> maybe [Route] Destination=10.0.0.0/0 Type=unreachable
+    19:51 <twb> Type=blackhole exists within .network
+    19:51 <twb> But systemd-networkd doesn't manage the lo iface, at least on Debian 10
+    19:51 <twb> Maybe I can/should just continue putting them in /etc/network/interfaces, on the lo iface...
+    19:51 <grawity> well
+    19:51 <grawity> where do you set up the default route?
+    19:52 <grawity> the problem doesn't exist when you do not have a default route yet
+    19:52 <grawity> so the natural place would be eth0.network or something such
+    19:52 <twb> grawity: default route is set up on one or more ethernet interfaces
+    19:52 <grawity> "or more"?
+    19:52 <twb> grawity: for when I have multiple upstreams for failover reasons
+    19:52 <twb> You put a "throw" rule in the default route table, and use firewall marks to send responses over the correct uplink
+    19:53 <killermoehre> twb: wouldn't you solve multiple upstreams with a team-device or appropriate metrics?
+    19:53 <twb> But yeah, I could probably just shove them in the single upstream.network that I have in most systems
+    19:54 <grawity> killermoehre: team/bond only works with multiple identical links (i.e. gives you a single fat cable)
+    19:54 <twb> killermoehre: http://cyber.com.au/~twb/doc/dual-uplink.txt
+    19:54 <grawity> twb: add the routes in *all* .network files
+    19:54 <twb> grawity: hrmmmm
+    19:55 <grawity> in my config, I create a dummy0.netdev for reasons, so I'd be placing such rules there
+    19:55 <twb> grawity: the routes aren't link-local by default, though
+    19:55 <grawity> (although I already have BIRD routing daemon to handle that for me, but otherwise)
+    19:55 <grawity> twb: they don't have to be, do they
+    19:55 <twb> if you have (say) an uplink.network and a downlink.network, and BOTH of them define the same blackhole routes, then if EITHER link goes down, won't networkctl drop the blackholes?
+    19:55 <grawity> hmm I don't see why
+    19:56 <twb> because it would remove routes as part of its teardown
+    19:56 <twb> (surely?)
+    19:56 <grawity> not if it knows that the same route is defined by another device
+    19:56 <twb> Oh OK
+    19:56 <grawity> which I hope it does
+    19:56 <twb> I didn't expect it to be that smart :P
+    19:57 <grawity> the advantages of having a central daemon instead of a collection of shellscripts?
+    19:58 <grawity> hmm that 'throw default' trick might be useful
+    19:58 <twb> yaaaaaay learing
+    19:58 <twb> *learning
+    19:59 <twb> In other news, *something* created ve-<hostname> and networkctl says it's no-carrier configuring
+    19:59 <twb> But it's not mentioned in /etc/systemd/network/
+    19:59 <grawity> sounds like a nspawn thing
+    20:00 <grawity> the host end of a veth pair
+    20:00 <twb> Oh, /lib/systemd/network/80-container-ve.network
+    20:00 <twb> Anyway, possibly because of that, when I force-reload systemd-networkd, it tells me wait-online will never happen, which makes me cranky.
+    20:00 <twb> systemd-networkd-wait-online[21108]: Event loop failed: Connection timed out
+    20:00 <twb> systemd[1]: Failed to start Wait for Network to be Configured.
+    20:01 <killermoehre> twb: you want probably your own wait-online.service
+    20:01 <twb> Can't I just tell it not to care about the ve-* thing?
+    20:01 <twb> Its logs suggest it's already ignoring lo
+    20:02 <twb> Oho, /lib/systemd/systemd-networkd-wait-online --help says it has --ignore
+    20:05 <twb> Also, I just realized it's named after one of the nspawn'd hosts, rather than after the host OS.  So now I understand what's going on better.
+    20:06 <twb> If I "machinectl stop not-alamo", systemd-networkd-wait-online completes immediately
+    20:07 <twb> http://ix.io/1J6K  you can see the ve getting confused during "machinectl start"
+    20:08 <twb> But that's probably my fault for not setting up the /var/lib/machines/not-alamo/ tree the way machined expects
+    20:08 <grawity> networkd could use some verbosity by default imho
+    20:12 <Xogium> so could timesyncd… Doesn't even signal a dns resolution failure of any kind and just reports idling away when checking the status… I had to run ntpd to understand it was dnssec failure every time
+    20:12 <grawity> though lennart will of course just say "yeah and I'd like a pony"
