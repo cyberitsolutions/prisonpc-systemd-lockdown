@@ -332,25 +332,100 @@ EOF
 chroot /mnt apt install etckeeper
 chroot /mnt apt install aptitude
 chroot /mnt apt install nocache
-chroot /mnt apt install apparmor apparmor-profiles apparmor-utils # libpam-apparmor libapache2-mod-apparmor
-chroot /mnt apt install ntpsec ntpsec-ntpdate
+chroot /mnt apt install apparmor apparmor-profiles apparmor-utils libpam-apparmor apparmor-easyprof apparmor-profiles-extra  # libapache2-mod-apparmor
+chroot /mnt apt install ntpsec ntpsec-ntpdate  # FIXME: THIS IS FOR NEW ALPHA, **NOT** NEW OMEGA
 ##chroot /mnt apt install ntpsec-ntpviz gnuplot-nox gnuplot-qt-   # apache2-
 chroot /mnt apt install samba winbind smbclient libpam-krb5 krb5-user ldb-tools
 chroot /mnt apt install gitit pandoc texlive
 chroot /mnt apt install strace curl w3m wget wget2 squashfs-tools hdparm
 chroot /mnt apt install emacs-nox emacs-el elpa-debian-el elpa-devscripts elpa-systemd
-chroot /mnt apt install build-essential devscripts dpkg-dev pkgconf
+chroot /mnt apt install build-essential devscripts dpkg-dev pkgconf at-
 chroot /mnt apt install bash-completion
-chroot /mnt apt install postfix postfix-lmdb dovecot-imapd dovecot-lucene dovecot-sieve dovecot-managesieved dovecot-lmtpd
+chroot /mnt apt install postfix postfix-lmdb dovecot-imapd dovecot-lucene dovecot-sieve dovecot-managesieved dovecot-lmtpd procmail-
 chroot /mnt apt install systemd-cron cron-
 chroot /mnt apt install libnss-systemd libnss-myhostname libnss-resolve
 chroot /mnt apt install systemd-coredump
 chroot /mnt apt install knot-dnsutils
 chroot /mnt apt install gitolite3
 chroot /mnt apt install gnupg2 tig
+chroot /mnt apt install nginx-light apache2-
+chroot /mnt apt install fail2ban
+chroot /mnt apt install nsd
+chroot /mnt apt install charybdis atheme limnoria     # OR charybdis->ircd-hybrid (no SASL?); OR atheme-services->anope
+
+
+# work around a bug that was confusing aa-genprof?
+chroot /mnt touch /etc/apparmor.d/local/{usr.sbin.dovecot,usr.lib.dovecot.{deliver,managesieve,managesieve-login,imap,imap-login,dovecot-lda,auth,pop3-login,config,dict,pop3,log,anvil,ssl-params,dovecot-auth,lmtp}}
 
 
 ## debspawn needs /dev/null to work in in /var/tmp/debspawn
 ## root@not-omega:~/mg# zfs create -o devices=on omega/var/tmp/debspawn
 ## root@not-omega:~/mg# debspawn create testing
 ## root@not-omega:~/mg# debspawn create testing --mirror=http://apt.cyber.com.au/debian
+
+
+# Making alamo using an openvz/LXC-style container, rather than a full VM.
+zfs create -o canmount=off                              omega/var/lib
+zfs create -o canmount=off                              omega/var/lib/machines
+zfs create -o quota=4G                                  omega/var/lib/machines/alamo
+chroot /mnt systemctl enable systemd-nspawn@alamo
+
+
+cat >/mnt/etc/systemd/system/charybdis.service <<'EOF'
+[Unit]
+Description=Charybdis IRC server
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=forking
+User=charybdis
+ExecStartPre=/usr/bin/charybdis -conftest
+ExecStart=/usr/bin/charybdis
+ExecReload=/bin/kill -HUP $MAINPID
+
+ProtectSystem=full
+RuntimeDirectory=charybdis
+NoNewPrivileges=true
+CapabilityBoundingSet=~CAP_SYS_ADMIN
+CapabilityBoundingSet=~CAP_DAC_OVERRIDE
+CapabilityBoundingSet=~CAP_SYS_CHROOT
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+## This script is total shit, and it's only actually used when statistics are enabled in ntp.conf.
+## We should probably just "systemctl disable" its corresponding .timer unit.
+## And if we *do* turn on stats, expiring old ones sounds like a job for /etc/logrotate.d/!
+mkdir /mnt/etc/systemd/system/ntpsec-rotate-stats.service.d
+cat >/mnt/etc/systemd/system/ntpsec-rotate-stats.service.d/override.conf <<'EOF'
+[Service]
+PrivateNetwork=yes
+User=ntpsec
+PrivateUsers=yes
+PrivateNetwork=yes
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_UNIX
+PrivateDevices=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectControlGroups=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectSystem=strict
+ReadWritePaths=-/var/log/ntpsec/
+WorkingDirectory=/var/log/ntpsec
+IPAddressDeny=any
+SystemCallArchitectures=native
+RestrictNamespaces=yes
+NoNewPrivileges=yes
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+RestrictRealtime=yes
+LockPersonality=yes
+RemoveIPC=yes
+MemoryDenyWriteExecute=yes
+## Not set because we *WANT* /var/log/ntpsec/temps.YYYY-MM-DD.gz to be world-readable.
+#Umask=
+EOF
