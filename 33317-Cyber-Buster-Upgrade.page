@@ -45,6 +45,8 @@ Checklist
   and then use squid-deb-proxy-client on "all" the clients, so they
   auto-discover _apt._tcp stuff from apt-cacher-ng on the LAN?
 
+- **TODO** firewalld is the default on RHEL7.  Should we adopt it?
+
 
 
 Plan / Overview
@@ -494,6 +496,35 @@ Containers (or not)
 * MAYBE what they expect me to do is have like nsd3.service PrivateNetwork=yes, AND THEN create-iface-for-nsd3.service with JoinsNamespaceOf=nsd3.service ExecStart=/sbin/ip set dev eth0 netns SOMETHING ???
 
   https://github.com/systemd/systemd/issues/2741  seems to be describing a similar setup (eventually).
+
+
+Which IRCd?
+------------------------------
+* We used to just install ircd-irc2, which is the OLDEST and DUMBEST irc server, based on "YAGNI" and laziness.
+
+* We don't actually need *ANYTHING* clever,
+  except for channel logging and announcing alloc status changes (poll an RSS feed and broadcast it into IRC).
+
+  We don't even need TLS + SASL (encryption + authentication) because
+  currently we simply require IRC to happen over SSH.  (Except maybe Ron would value that.)
+
+  UPDATE: ron is VERY interested.
+
+* https://upload.wikimedia.org/wikipedia/commons/d/d5/IRCd_software_implementations3.svg
+* https://en.wikipedia.org/wiki/Comparison_of_Internet_Relay_Chat_daemons
+* None of the ircds in Debian have existing systemd lockdown.
+* None of the ircds in Debian have existing apparmor lockdown.
+* Of the ircds in Debian, several have TLS; only charybdis has SASL.
+* Let's use charybdis for now and see how we go?
+
+
+Which IRC bot?
+------------------------------
+* supybot is dead
+* we need it to 1) join #cyber, 2) log conversation therein, and 3) announce "news" from alloc's RSS feed
+* https://github.com/Supybot/Supybot directs us to https://github.com/ProgVal/Limnoria, which exists in Debian 10.
+* Let's start with limnoria for now.
+
 
 
 References
@@ -2817,14 +2848,14 @@ IRC Logs
     13:02 <gyakovlev> twb: found it! https://www.hamiltonshells.ca/zfs-iso/experimental/ <- with encryption support.
     13:02 <zfs-bot> [ Index of /zfs-iso/experimental ] - www.hamiltonshells.ca
     13:04 <twb> gyakovlev: cool
-    13:06 <twb> Now my only problem is I don't know offhand what a "herp derp I'm a small business server" is called in examples/*.fio
+    13:06 <twb> Now my only problem is I don't know offhand what a "herp derp I'm a small business server" is called in examples/\*.fio
     13:12 <dirtycajun> most of the tests are specific
     13:13 <twb> Yeah I looked for something like "smb" or "smtp"; I'm poking through the docs now
     13:15 <twb> Looks like the oldest examples are "1mbs_clients", "aio-read", "tiobench-example".
 
 2019-05-14 #gitolite::
 
-    14:35 <twb> Right now I just have a bunch of bare repos /srv/vcs/myproject.git/ that everyone has group write access to via SSH.  The only real annoyance is the umask is usually wrong, which I kludge with something like "@hourly chmod -r g+w /srv/vcs/*.git".
+    14:35 <twb> Right now I just have a bunch of bare repos /srv/vcs/myproject.git/ that everyone has group write access to via SSH.  The only real annoyance is the umask is usually wrong, which I kludge with something like "@hourly chmod -r g+w /srv/vcs/\*.git".
     14:35 <twb> I'm looking at gitolite to avoid the crappy cron job.
     14:36 <twb> But!  I have this one repo that isn't bare - the backend for my gitit wiki.  Can gitolite cope with non-bare repos?
     16:47 <sitaram> twb: gitolite ignores non-bare repos
@@ -3032,3 +3063,138 @@ IRC Logs
     20:08 <grawity> networkd could use some verbosity by default imho
     20:12 <Xogium> so could timesyncd… Doesn't even signal a dns resolution failure of any kind and just reports idling away when checking the status… I had to run ntpd to understand it was dnssec failure every time
     20:12 <grawity> though lennart will of course just say "yeah and I'd like a pony"
+
+2019-05-16 #ntpsec::
+
+    19:56 <twb> Why isn't /usr/lib/ntp/rotate-stats just /etc/logrotate.d/ntpsec ?
+    21:10 <twb> Woo, using rotate-stats as my test for "tell systemd to lock down all the things", and the script is still correctly gzipping and find -delete'ing.
+    21:10 <twb> http://ix.io/1JcP
+
+2019-05-16 #systemd::
+
+    16:23 <twb> Can I "systemd analyze security" an ordinary file, that I haven't installed into a running systemd yet?
+    17:15 <jelle> twb: man page mentions [unit...] not a regular file
+    17:15 <twb> jelle: yeah thanks.  I thought there might be some way I hadn't seen
+    17:16 <twb> The use case was comparing lockdown between e.g. competing MTAs, where I can't install >1 at a time.
+    17:17 <twb> Or doing a bulk check of all the units in Debian, without installing anything
+    17:17 <jelle> well you can always lock them down yourself
+    17:17 <twb> jelle: yeah granted.  I want to know which upstreams had already made an effort
+    17:17 <twb> Becaues if they have, they probably care about security in general
+    17:17 <jelle> I wouldn't agree :p
+    17:18 <twb> haha
+    17:18 <jelle> it's pretty new, and systemd files can also come from your distro
+    17:19 <twb> granted
+    18:21 <twb> When I'm locking down a unit, is there something like strace or audit to tell me all the things it TRIED to do?
+    18:22 <twb> Like, my test case is an irc daemon, and with ProtectSystem=strict, some of its helper processes fail, but it's not immediately obvious WHY.
+    18:34 <jelle> well strace -e open $process shows files it opens
+    18:35 <twb> Yeah, adding that to the front of ExecStart= is basically plan B
+    18:35 <twb> I was hoping you'd say "oh, use systemd-supercoolthing"
+    18:35 <jelle> I wonder if systemd has thought of showing violations or even neater, analyzing a process and generating rules
+    18:35 <twb> apparmor has a huge set of helper tools to help automate aa lockdown
+    18:36 <twb> like, it's smart enough to do things like "hey, looks like this is doing DNS stuff, so I'll suggest @include dns-common"
+    18:36 <twb> rather than just the individual specific things it saw the daemon doing while in complain mode
+    18:43 <twb> OK so FYI, I re-remembered that I do like "aa-genprof /usr/bin/irssi", then in another window run irssi and do some stuff.  Then in the first window hit "s" and "f", and I have an /etc/apparmor.d/usr.bin.irssi example ruleset
+    18:44 <twb> Which lets me see that it needs read access to /etc and write access to $HOME, for example, so ProtectHome= won't be its friend
+    18:45 <twb> And it executed /bin/dash, so removing fork(2) won't work
+    18:45 <twb> Oh.  Oh damn.  irssi already HAD an aa profile.  Let me try a different test program :-/
+    19:02 <xenefix> Hi hi there
+    19:08 <xenefix> https://www.irccloud.com/pastebin/1ZJrZXv8/br1.network
+    19:08 <xenefix> I have following networkd network
+    19:09 <xenefix> and RA's are sent out correctly
+    19:09 <xenefix> but the hop limit is set to 0, so the receiving machine doesn't configure the bridge as default gateway
+    19:36 <xenefix> In radvd this option is called AdvRouterAdd https://www.irccloud.com/pastebin/LuBcKSPl/
+    20:35 <twb> How do I use SystemCallFilter=
+    20:36 <twb> I'm doing a test lockdown of what is basically logrotate.sh
+    20:37 <TheBrayn> man 5 systemd.exec has some more information on that
+    20:37 <twb> http://ix.io/1JcB
+    20:37 <twb> TheBrayn: yeah I'm reading that but I'm clearly too tired to understand what I'm doing wrong
+    20:39 <twb> Oh maybe SystemCallFilter= isn't supported on this kernel
+    20:39 <twb> let's look for that "herp derp no BPFs" message that timesyncd sometimes emits
+    20:40 <twb> Can't see it...
+    20:41 <twb> I have CONFIG_CGROUP_BPF=y at least
+    20:44 <twb> Brainwave: look for existing SystemCallFilter= examples
+    20:45 <twb> lib/systemd/system/nsd.service:SystemCallFilter=~@clock @cpu-emulation @debug @keyring @module mount @obsolete @resources
+    20:45 <twb> systemd-analyze security claims that's unlocked, too
+    20:45 <twb> All the other examples use a whitelist, not a blacklist
+    20:45 <twb> e.g. lib/systemd/system/systemd-hostnamed.service:SystemCallFilter=@system-service sethostname
+    20:46 <twb> "systemd-analyze security systemd-hostnamed" shows green for most (but not all) SystemCallFilter= lines.
+    20:47 <twb> So WTF
+    20:54 <twb> I used SystemCallFilter=@system-service for now, which is "90% right"
+    20:54 <twb> I also noticed that "systemd-analyze security" is reporting that User= and PrivateUsers= aren't locked down, even though I've set them and they show up in "systemctl show"
+    20:57 <twb> And I can see from the files it's creating that it's definitely running as User=
+    20:59 <killermoehre> hmm, intersting problem: can I list a units with type X where property Y has value Z?
+    20:59 <killermoehre> *all units
+    21:00 <twb> killermoehre: I only know how to do that by brute force
+    21:00 <twb> list-units | show | grep
+    21:00 <killermoehre> twb: yeah, brute-force is easy. but something with busctl?
+    21:03 <twb> ARGH.  I was doing "up up up ret" to check the systemd-analyze after editing
+    21:03 <twb> But I was running the wrong command out of my history
+    21:03 <twb> Now I run the right command, things work!
+    21:03 <twb> → Overall exposure level for ntpsec-rotate-stats.service: 0.3 SAFE 😀
+
+2019-05-16 #apparmor::
+
+    19:13 <twb> Woo, I'm using aa-genprof like a grownup!
+    19:13 <twb> This one looks funny, though: http://ix.io/1Jcm  isn't totem a video playing thing?
+    21:20 <twb> FTR, abstractions/totem *is* the movie-playing thing
+    21:21 <twb> No idea why it was suggested; I skipped past it and got to a point where the daemon was still segfaulting, but genprof wasn't finding any more auditd items, so I gave up for tonight
+
+2019-05-16 #debian-au::
+
+    16:18 <twb> A-ha! https://upload.wikimedia.org/wikipedia/commons/d/d5/IRCd_software_implementations3.svg
+    16:19 <twb> wow, Exchange has a built-in IRCd
+    16:21 <pabs> what?
+    16:22 <twb> pabs: based on that graph
+    16:22 <twb> $ apt download ircd-irc2  charybdis inspircd ircd-hybrid ircd-ircu foxeye; for i in *.deb; do dpkg-deb -c "$i"; done | grep systemd
+    16:22 <twb> ===> only ircd2 and inspircd have native systemd units at all
+    16:22 <pabs> wow
+    16:23 <pabs> that graph is amazing, IRC folks don't seem to like to work together
+    16:23 <twb> pabs: bear in mind some of that happened in the 1980s
+    16:24 <pabs> ack, I guess there are way fewer active codebases these days
+    16:24 <twb> pabs: also separate networks tend to be highly autonomous; efnet/undernet/freenode/oftc don't have much overlap between them
+    16:24 <twb> Both their systemd units are pretty crap
+    16:29 <twb> → Overall exposure level for charybdis.service: 9.5 UNSAFE 😨
+    16:29 <twb> → Overall exposure level for ircd-irc2.service: 9.1 UNSAFE 😨
+    16:29 <twb> Hnerp!
+    16:35 <pabs> where does that check come from?
+    16:35 <twb> pabs: systemd-analyze security
+    16:36 <twb> (It's great)
+    16:36 <pabs> hmm
+    16:36 <pabs> $ systemd-analyze security | grep UNSAFE | wc -l
+    16:36 <pabs> 63
+    16:36 <pabs> $ systemd-analyze security | grep -v UNSAFE | wc -l
+    16:36 <pabs> 14
+
+    17:14 <twb> charybdis (IRC server) default config file on debian has pre-set passwords for people coming from 198.51/24
+    17:14 <twb> Meaning that if you just install it, people in that IP range have ops by default
+    17:14 <twb> It's also trying to connect (and maybe forward traffic?) to uplink.com by default
+    17:41 <dwfreed> twb: the debian stable charybdis default config does not give any external IP address operator access
+    17:42 <twb> dwfreed: I'm lookin at 4.1.1 on buster
+    17:43 <dwfreed> 4.1.1 is the same thing
+    17:44 <twb> dwfreed: I see 	user = "*@198.51.100.0/24";  on line 188
+    17:44 <twb> 	password = "letmein";
+    17:44 <twb> If that's turned off, I can't see WHERE it is turned off
+    17:44 <dwfreed> that is not an oper block
+    17:44 <twb> 	class = "opers";
+    17:44 <dwfreed> still not an oper block
+    17:44 <twb> Hrm, OK
+    17:45 <dwfreed> also, that's a documentation network
+    17:45 <twb> I am new to actually *configuring* the ircd
+    17:45 <dwfreed> CIDR:           198.51.100.0/24
+    17:45 <dwfreed> NetName:        TEST-NET-1
+    17:45 <twb> dwfreed: oh, I didn't know that
+    17:45 <dwfreed> Comment:        Addresses starting with "192.0.2.", "198.51.100.", or "203.0.113." are reserved for use in documentation and sample configurations.  They     should never be used in a live network configuration.  No one has permission to use these addresses on the Internet.
+    17:45 <twb> Excellent
+    17:45 <dwfreed> the connect blocks use IPs in the 203.0.113.0/24 range
+    17:46 <dwfreed> also as an example
+    17:46 <dwfreed> 2001:db8::/32 is likewise a documentation network
+    17:46 <twb> https://en.wikipedia.org/wiki/Reserved_IP_addresses#IPv4
+    17:46 <twb> I guess I should add more blackhole routes
+    17:47 <dwfreed> no need, your ISP already has them
+    17:47 <twb> I don't trust ISPs to do their job :P
+    17:47 <dwfreed> if they don't, their transit providers do
+    17:47 <twb> (I have a whole portable /24 so I'm already a bit weird)
+    17:48 <twb> Anytime I have something routing between two networks, I blackhole private ranges as a basic best practice paranoia
+    17:50 <dwfreed> look at RFC 1918 and the RFCs that update it
+    17:51 <dwfreed> or read wikipedia
+    17:51 <twb> I have, long long ago
