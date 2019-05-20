@@ -120,8 +120,10 @@ Plan / Overview
   * nut (upsd)
 
 
-How do we boot ZFS?
--------------------
+[SOLVED] How do we boot ZFS?
+----------------------------
+
+* SHORT VERSION:  git clone login.cyber.com.au:/srv/vcs/flash-kernel-efi.git
 
 * ZFS wants to be given whole disks, not partitions.
   On Linux, benefits are
@@ -281,8 +283,10 @@ How do we boot ZFS?
     "[GPT1][md metadata][FAT][blank][GPT2]".  But UGH.
 
 
-ZOL 0.8~rc4?
-------------
+[SOLVED] ZOL 0.8~rc4?
+---------------------
+* UPDATE 2019-05-20: I've been running 0.8~rc4 instead of 0.7.
+  I see no reason to go back to 0.7 and fight the systemd start-order issues.
 
 * ZOL 0.8 adds a systemd generator (zfs-mount-generator).
   This makes /etc/fstab obsolete and allows mounts to be done ENTIRELY inside ZFS.
@@ -304,17 +308,29 @@ ZOL 0.8~rc4?
   We will probably end up with the shitty situation of missing out on this by <1y, and
   having unencrypted new-alpha and new-omega, and LUKS encrypted offsite DR.
 
-How do I grow the refind ESP enough to put kernels in there?
-------------------------------------------------------------
+
+[SOLVED] How do I grow the refind ESP enough to put kernels in there?
+--------------------------------------------------------------------------------
 * gparted can grow a FAT32 filesystem
 * parted 3.0+ has no "resize", only "resizepart", which explicitly does not touch the filesystem, only the partition.
 * gparted is doing the resize by calling libparted's fat_resize(), AFAICT.
 * libparted's provides no way to access fat_resize() from a script or CLI?
 * no other tools, e.g. dosfsutils, seem to provide a filesystem-only growing tool a la resize2fs for ext4.
 * UPDATE: apt install fatresize ???
+* UPDATE: refind uses FAT12 now, which neither gparted nor fatresize actually support.
+  We *have to* make a new (bigger) ESP partition, so we might as well make the whole ESP USB key ourselves.
+  This also means we are running the refind from inside Debian (rather than "download from some guy's website").
+
+  We use refind-install (install to ESP:\BOOT\BOOTX64.EFI) *not* the
+  default behaviour (install to ESP:\REFIND\REFIND_X64.EFI & then use
+  efibootmgr to "add" that path to the mainboard's list of boot
+  options) because
+
+  1) the latter doesn't work for USB keys on the "learning" server (old gigabyte mainboard); and
+  2) the same problem might bite us latter, and we don't need >1 bootloader, so "stealing" the fallback bootloader's slot doesn't hurt us.
 
 
-How do we lay out the datasets in the ZFS pool?
+[SOLVED] How do we lay out the datasets in the ZFS pool?
 ----------------------------------------------------------------------
 * Why do we have -o canmount=no "useless" datasets?
   It is just to avoid specifying -o mountpoint=X?
@@ -366,8 +382,8 @@ How do we lay out the datasets in the ZFS pool?
   (ESP backup) that isn't a VM, so... meh.
 
 
-initramfs-tools or dracut?
---------------------------
+[SOLVED] initramfs-tools or dracut?
+-----------------------------------
 Both can be MADE to work.
 As at 2019-05-06, I (twb) am inclined to stick with initramfs-tools.
 
@@ -414,6 +430,10 @@ Samba
 * How do we make sure Samba is only using strong, salted hashed (e.g. SSHA2) for passwords?
 * What *is* the "sysvol"?
 * How do I put sudoers.ldap into the Samba LDAP schema?
+* UPDATE 2019-05-20: nobody is helping ANYONE in #samba and AD is full of MS weirdness;
+  I think there is not enough benefit to be worth the cost!
+  For now I am using flat files (/etc/shadow) and doing other stuff; might come back to this later.
+
 
 Ansible / Configuration Management
 -------------------------------------
@@ -497,6 +517,16 @@ Containers (or not)
 
   https://github.com/systemd/systemd/issues/2741  seems to be describing a similar setup (eventually).
 
+* UPDATE: I tried following the instructions in that github issue, but all I got was ip(8) segfaulting.
+  It's not clear to me if this is achievable AT ALL.
+
+  systemd-nspawn has exactly this kind of magic (veth / netns), but it's not clear how to access it without a separate, full rootfs.
+  Can I maybe do something like this, so that inside the container it "only" runs the one service we want (and anything it needs)? ::
+
+    systemctl-nspawn --root=/ --args='quiet nosplash -- --unit=nsd.service'
+
+  For now (2019-05-20), I am leaving this issue and looking at other stuff.
+
 
 Which IRCd?
 ------------------------------
@@ -516,6 +546,8 @@ Which IRCd?
 * None of the ircds in Debian have existing apparmor lockdown.
 * Of the ircds in Debian, several have TLS; only charybdis has SASL.
 * Let's use charybdis for now and see how we go?
+* UPDATE: to provide SASL you need *both* an ircd *and* a set of "privileged" bots, which is either "anope" or "atheme-services" package.
+  The "atheme-services" package is the one written by the charybdis maintainers.
 
 
 Which IRC bot?
@@ -3198,3 +3230,197 @@ IRC Logs
     17:50 <dwfreed> look at RFC 1918 and the RFCs that update it
     17:51 <dwfreed> or read wikipedia
     17:51 <twb> I have, long long ago
+
+2019-05-20 #systemd::
+
+    11:11 <twb> Does IPAddressAllow= control which addresses the unit can be a server for (listen on), or which addresses the unit can connect to, or both, or what?
+    11:12 <twb> "Access will be granted in case its destination/source address matches any entry"
+    11:12 <twb> ...makes it sound like as long as *either* end matches, it'll be allowed
+    11:13 <twb> Hrm, so I can do something like "IPAddressAllow=10/8 127/8 IPAddressDeny=all" to allow it to reach anything on the LAN
+    11:14 <twb> But I can't say something like "this host has ten IPs, allow unit X.service to LISTEN only on 10.1.2.3/32, but ACCEPT connections from anywhere"
+    11:54 <twb> Is there an /etc/systemd/system.conf.d/override.conf, or do I have to edit system.conf directly?
+    11:57 <twb> Is there something like systemd-cgls but for namespaces instead of cgroups?
+    12:07 <deltab> newer versions of pstree can show namespace changes
+    12:09 <twb> Hrm, diff -u <(pstree) <(pstree -S)
+    12:09 <twb> Shows that e.g. dovecot has a "mnt" namespace, and systemd-nspawn has a whole bunch
+    12:12 <twb> When I see this error, what have I done wrong?
+    12:12 <twb> root@not-omega:~# machinectl login not-alamo
+    12:12 <twb> Failed to get login PTY: Protocol error
+    12:14 <twb> The container has started up just fine (via machinectl start not-alamo); the guest has systemd as pid1; not sure what else to check
+    12:16 <twb> Hrm, there is *both* "login" and "shell" commands
+    12:16 <twb> Same error, though
+    12:25 <twb> To answer one of my earlier questions, systemd-system.conf says /etc/systemd/system.conf.d/*.conf is checked
+    12:25 <deltab> does the container have dbus? https://github.com/systemd/systemd/issues/685
+    12:26 <twb> deltab: good thinking!  Debian's systemd doesn't hard-depend on dbus for horrible reasons
+    12:28 <twb> Does SystemCallArchitectures= affect people using qemu CPU emulation + binfmt-misc to run cross-arch chroots?
+    12:28 <twb> e.g. an armv7 chroot on x86_64 hardware
+    12:29 <twb> https://wiki.debian.org/QemuUserEmulation
+    12:30 <twb> deltab: dbus was not installed
+    12:32 <twb> "$ systemd-nspawn --machine not-alamo apt install dbus" didn't Just Work; seems it either can't resolve or can't connect to deb.debian.org :-(
+    12:35 <twb> Looks like inside the container, nsswitch.conf and resolv.conf are only pointing at systemd-resolved, and systemd-resolved's backcompat listened on 127.0.0.53 is off because I'm running an authoritative nameserver on this host
+    12:35 <twb> So installing libnss-resolve inside the container will probably fix it
+    12:37 <twb> OK, after installing dbus, "machinectl login" works fine!
+    12:38 <twb> "machinectl shell not-alamo" gives "sh: 2: exec: : Permission denied".
+    12:38 <twb> Ah, I'm supposed to do something like this: "machinectl shell not-alamo /bin/cat /etc/passwd"
+    12:43 <deltab> it seems the message was changed to "Failed to get login PTY: There is no system bus in container" -- do you have a pre-2016 version of systemd?
+    12:44 <deltab> looks like IPAddressAllow works at the packet level, so it doesn't know about syscalls
+    12:44 <twb> inside the container, yes
+    12:45 <twb> host is Debian 10, guest is Debian 9
+    12:45 <twb> deltab: so IPAddressAllow is basically a per-unit netfilter *filter table?
+    12:46 <deltab> yeah, looks that way
+    12:47 <twb> Is it possible to have a full nftables ruleset per-unit?
+    12:48 <twb> (for doing fancier things, like, oh, rate limiting or port knocking)
+    13:16 <deltab> I imagine so, tied to the network namespace, but I don't know how you'd set it up
+    13:23 <twb> I tried using a PowerPC 64 chroot via qemu+binfmt, and SystemCallArchitecture didn't stop me
+    13:23 <twb> http://ix.io/1JxB
+    13:24 <twb> The use case for that is cross-compiling without having to spin up special any cross-arch packages, or a full VM, but sort of in-between
+    13:35 <scientes> tttwyou really need a real VPS
+    13:35 <scientes> qemu for powerpc64 is not very good
+    13:35 <scientes> at least when it comes to altivec
+    13:36 <scientes> twbbbbbbbbbbbb
+    13:36 <scientes> twb, 
+    13:37 <twb> k.  That was really a thought experiment though
+    13:37 <scientes> and clang is a native cross-compiler
+    13:37 <scientes> so it is quite easy to cross-compile with clang
+    13:38 <Xogium> qemu is no good for aarch64 either
+    13:38 <twb> scientes: but then you have to deal with all the build depends and everything
+    13:38 <scientes> debian can do it
+    13:38 <scientes> but only to a certainly point necessary to bootstrap a new arch
+    13:38 <scientes> ARM sponsored that work
+    13:38 <twb> you mean like "apt install libfoo-dev:ppc64el" ?
+    13:38 <scientes> for their AArch64 bringup
+    13:38 <scientes> no, it can bootstrap itsself
+    13:39 <scientes> dpkg-buildpackage supports cross-builds
+    13:40 <twb> hrm
+    13:41 <scientes> systemd probably cross builds with it (or use to) as it is important
+    13:41 <twb> does systemd have a list of supported architectures?
+    13:41 <twb> You know like how GNOME doesn't support s390 anymore because rust.
+    13:42 <scientes> s390 works with llvm
+    13:42 <scientes> well actually not sure, ppc64el certainly does
+    13:42 <scientes> twb, systemd supports gcc and clang
+    13:42 <scientes> and even the 486
+    13:42 <twb> righto
+    13:43 <scientes> (which is gcc-specific, clang can only build pentium 3+)
+    13:43 <twb> insert joke here "it said pentium or better so I bought a sparcstation"
+    13:46 <Xogium> too bad systemd can only be built with glibc
+    13:47 <Xogium> uclibc-ng used to work, then they broke support for it, then they fixed it, then they broke it for good again
+    13:47 <Xogium> and lets just not try with musl
+    13:48 <twb> but but but musl has a UTF-8 LANG=C!
+    13:49 <scientes> or you can just ignore that variable...
+    13:49 <scientes> cause wide character support in libc is so funcky, systemd doesn't use it
+    13:50 <Xogium> well, they planned on making that the default for a while and afaik its still the default
+    13:50 <Xogium> you have to specify the C local now or its going to default to the utf8 variant
+    13:51 <Xogium> which… Noone provides, afaik
+    13:52 <scientes> environment variables are a really bad design anyways
+    13:52 <scientes> they waste memory bad
+    13:52 <twb> Xogium: AFAIK glibc/RH/Debian are working to clean up C vs. C.UTF-8 right now
+    13:53 <Xogium> well, they'd better do it :D
+    13:54 <Xogium> I mean, we're in 2019 lol
+    14:35 !!! irc.freenode.net: deleted (closed)
+    > 14:45 /join #systemd
+    14:45 <twb> Does "systemctl daemon-reload" cause system.conf to be reread?
+    14:45 <twb> I guess I can just put a typo in it and see if I see a warning
+    14:46 <twb> Rargh, my qemu test earlier was bogus!
+    14:46 <twb> May 20 13:22:30 not-omega systemd[1]: /etc/systemd/system/qemu-versus-systemcallarchitectures.service:4: Unknown lvalue 'SystemCallArchitecture' in section 'Service', ignoring
+    14:47 <twb> Ah, it's
+    14:47 <twb> Ah, it's plural
+    14:54 <twb> OK, SystemCallArchitectures=native is still not stopping qemu-user-binfmt, FYI
+    14:55 <twb> Also, daemon-reload appears to have reread system.conf, because now the logs are getting "Consumed 31ms CPU time, no IP traffic." lines
+    15:58 <twb> Hey!  journalctl -u foo can't see kernel auditd messages about foo!
+    16:21 <twb> If I want to see the read-only vs. read-write vs. hidden of a given unit, do I look in /proc/<pidof daemon>/mountinfo?
+    16:21 <twb> That certainly tells me... something
+    16:22 <twb> It's hard to tell what's a bind mount, though
+    16:23 <twb> http://ix.io/1JxW
+    17:34 <twb> These options are pretty confusing - it has ro *and* rw, in separate places
+    17:34 <twb> root@not-omega:~# grep -Fw --color -e ro -e rw /proc/$(pidof rsync)/mountinfo
+    17:34 <twb> 1364 1281 0:21 / / ro,relatime shared:550 master:1 - zfs omega/ROOT rw,xattr,posixacl
+    17:34 <twb> it's read-only in practice, though
+    17:39 <twb> If I have a unit that wants to bind to a low port AND doesn't support socket activation, can I tell systemd to run it as User= but still give it CAP_NET_BIND?
+
+2019-05-20 #dovecot::
+
+    19:38 <twb> Anybody know offhand what capabilities and syscalls dovecot needs?
+    19:39 <twb> systemd-analyze security dovecot | curl '-sSfFf:1=<-' ix.io  looks like   http://ix.io/1Jyn
+    19:39 <twb> (That's systemd having a whinge about anything systemd isn't in charge of locking down)
+    19:42 <cmouse> it's impossible to say exhaustively.
+    19:42 <twb> No worries
+    19:43 <twb> At the moment I'm just e.g. making /etc read-only and then waiting for complaints in the logs
+    19:43 <twb> When I get it to a "near enough is good enough" state I'll push it upstream to Debian
+    19:44 <cmouse> did you look at the default policy we ship with dovecot?
+    19:45 <twb> I'm not sure what you mean by policy
+    19:45 <cmouse> sorry i mean service unit
+    19:45 <cmouse> https://github.com/dovecot/core/blob/master/dovecot.service.in
+    19:45 <twb> I'm starting from whatever Debian ships, which is probably the same as what you ship
+    19:46 <cmouse> for apparmor we provide 'apparmor'  plugin
+    19:46 <cmouse> to make it less complicated to write policies.
+    19:47 <cmouse> mostly it's for allowing to have a "hat" for accessing the user's mails
+    19:47 <twb> confirmed, what you linked to is what I was starting from, which systemd considers to be "EXPOSED" (http://ix.io/1Jyn)
+    19:48 <cmouse> sure.
+    19:48 <cmouse> we could probably tighen things up more if we wanted
+    19:48 <twb> It's broadly similar to an apparmor profile/selinux policy.  There's no changehat equivalent, though.
+    19:48 <cmouse> yeah
+    19:48 <twb> It's more stuff like "hey dovecot is never going to need to load kernel modules, so block that before it even asks"
+    19:48 <cmouse> we had to drop e.g. NoNewPrivileges because that breaks things
+    19:49 <cmouse> sure
+    19:49 <twb> ah, that's good to know
+    19:49 <cmouse> it is just difficult to validate which are breaking and which are not
+    19:49 <cmouse> since dovecot can be ran in so many ways
+    19:49 <cmouse> hm
+    19:49 <twb> Yeah, I'm looking to get something that's like 80% locked down and handles 80% of use cases with no fiddling, and people who want more or less can tweak it
+    19:49 <cmouse> we have ProtectSystem=full in our service block
+    19:50 <twb> =full isn't as full as =strict ;-)
+    19:50 <cmouse> i know
+    19:53 <twb> the nice thing about this new "systemd-analyze security" thing is it prioritizes them by badness, so you can do the scariest ones first
+    20:03 <twb> I think if NoNewPrivileges=yes breaks things, it would be good for the default unit to have a comment like "# NoNewPrivileges=yes broke XXX (ref. issue1234)", so there's a hint for the next person
+    20:04 <twb> The hint at the top about dovecot.service.d/service.conf can mention "systemctl edit dovecot" which is new since about 2016
+    20:05 <twb> I guess PrivateHome=no is needed for sieve and stuff, even if the actual mailboxes live in /var
+    20:07 <twb> Also, this might be obvious to you already: Type=simple means other units (e.g. postfix) cannot wait for dovecot to be "ready" unless dovecot has sd_notify("READY=1") stuff baked into it.
+    20:08 <twb> With Type=forking, systemd assumes when the double fork happens is when dovecot's "finished starting" and its dependencies can be spun up
+    20:09 <twb> I guess it doesn't really matter, because if postfix can't talk to dovecot's SASL socket, it'll just reject a few messages, it won't actually *crash*...
+
+2019-05-20 #debian-next::
+
+    18:14 <twb> Can I tell adduser to run "zfs create -o quota=1G /home/foo" when it makes a non-system user?
+    18:14 <twb> I can't see anything in adduser.conf except for setting the quota.
+    18:15 <twb> (zfs create makes a new dataset *and* sets a quota)
+    19:21 <twb> Gods, it's perl, I'd forgotten how old this code was
+    19:21 [twb runs away]
+    19:46 <dwfreed> twb: "If the file /usr/local/sbin/adduser.local exists, it will be executed after the user account has been set up in order to do any local setup.  The arguments passed to adduser.local are: username uid gid home-directory"
+    19:46 <dwfreed> a non-system user is any user whose UID is >= 1000
+    19:50 <twb> dwfreed: oh thanks, I missed that somehow
+    19:52 <dwfreed> I'd seen it before, so I knew what to look for in the manpage
+    19:52 <twb> I'll need to poke it a bit to see if that happens before or after /etc/skel copying &c
+    19:52 <twb> zfs gets cranky if you try to make a mountpoint where files already exist, &c
+    19:54 <dwfreed> adduser.local is the very last thing
+    19:54 <dwfreed> so you'd want to wrap adduser in your own script then
+    19:54 <dwfreed> twb: ^
+    19:55 <twb> Righto
+    19:55 <twb> For the initial ~10 users I can just do wahtever.  I was trying to be defensive for when user ~11 is created in a couple of years, and nobody realizes they need to "zfs create" because it's just in some knowledgebase article somewhere
+
+2019-05-20 #apparmor::
+
+    15:59 <twb> If upstream provides an apparmor profile for a binary, but it's a bit broken, can I store my fixes in a separate file?
+    15:59 <twb> The immediate case is this:
+    16:00 <twb> kernel: audit: type=1400 audit(XXX): apparmor="DENIED" operation="open" profile="/usr/sbin/apt-cacher-ng" name="/etc/ssl/openssl.cnf" pid=8216 comm="apt-cacher-ng" requested_mask="r" denied_mask="r" fsuid=108 ouid=0
+    17:09 <jjohansen> twb: potentially. It depends on what you are trying to do, and how the profile is setup
+    17:09 <jjohansen> you could of course always just replace the profile, obviously this isn't what you are asking
+    17:09 <jjohansen> depending on the reason for the denial
+    17:09 <jjohansen> its might be possible to extend the profile with an include.
+    17:10 <jjohansen> eg. several profiles have an include of
+    17:10 <jjohansen> /etc/apparmor.d/local/...
+    17:10 <twb> with that whole local/ thing everyone seems to- that
+    17:10 <jjohansen> which is a file you can locally edit
+    17:10 <jjohansen> right
+    17:11 <twb> Can I tell genprof to write there?
+    17:12 <jjohansen> however, local can't override some rules in the main profile, eg. if there is a deny in the main profile there isn't currently a way to override that in local
+    17:12 <jjohansen> twb: I don't think genprof supports writing to local yet, I know its planned for
+    17:12 <jjohansen> cboltz can speak to it better than I can
+    17:13 <jjohansen> twb: when apparmor 3 lands you will also have the option of setting up policy overlay directories
+    17:13 <jjohansen> so you could setup, a local overlay say
+    17:13 <jjohansen>  /etc/apparmor-local.d/
+    17:13 <jjohansen> or what ever you want to call it
+    17:14 <jjohansen> and drop a copy of the profile into that
+    17:14 <jjohansen> and edit it directly
+    17:14 <jjohansen> if a file is in the override dir, it will be used instead of the file underneath
+    17:14 <jjohansen> sadly that isn't available to you yet
+    17:15 <jjohansen> 2.13 only supports it for caches
