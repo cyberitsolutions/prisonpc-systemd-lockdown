@@ -353,6 +353,8 @@ chroot /mnt apt install fail2ban
 chroot /mnt apt install nsd
 chroot /mnt apt install charybdis atheme limnoria     # OR charybdis->ircd-hybrid (no SASL?); OR atheme-services->anope
 
+#chroot /mnt apt install qemu-user-binfmt qemu-user-static  # let me run an ARM64 chroot on X86_64 hardware.
+
 
 # work around a bug that was confusing aa-genprof?
 chroot /mnt touch /etc/apparmor.d/local/{usr.sbin.dovecot,usr.lib.dovecot.{deliver,managesieve,managesieve-login,imap,imap-login,dovecot-lda,auth,pop3-login,config,dict,pop3,log,anvil,ssl-params,dovecot-auth,lmtp}}
@@ -428,4 +430,113 @@ RemoveIPC=yes
 MemoryDenyWriteExecute=yes
 ## Not set because we *WANT* /var/log/ntpsec/temps.YYYY-MM-DD.gz to be world-readable.
 #Umask=
+EOF
+
+
+mkdir /mnt/etc/systemd/system.conf.d
+cat >/mnt/etc/systemd/system.conf.d/override.conf <<'EOF'
+# Enable accounting for all things.  (Imposes a performance overhead, but probably negligible.)
+[Manager]
+DefaultCPUAccounting=yes
+DefaultIOAccounting=yes
+DefaultIPAccounting=yes
+DefaultBlockIOAccounting=yes
+DefaultMemoryAccounting=yes
+DefaultTasksAccounting=yes
+EOF
+
+
+mkdir /mnt/etc/systemd/system/apt-cacher-ng.service.d
+cat >/mnt/etc/systemd/system/apt-cacher-ng.service.d/override.conf <<'EOF'
+[Service]
+# apt-cacher-ng needs network access
+PrivateNetwork=no
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+#IPAddressDeny=any
+#IPAddressAllow=localhost
+
+User=apt-cacher-ng
+PrivateUsers=yes
+RuntimeDirectory=apt-cacher-ng
+WorkingDirectory=/run/apt-cacher-ng
+
+CapabilityBoundingSet=
+PrivateDevices=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectControlGroups=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectSystem=strict
+ReadWritePaths=-/var/cache/apt-cacher-ng /var/log/apt-cacher-ng
+SystemCallArchitectures=native
+RestrictNamespaces=yes
+NoNewPrivileges=yes
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+RestrictRealtime=yes
+LockPersonality=yes
+RemoveIPC=yes
+MemoryDenyWriteExecute=yes
+## By default /var/cache/apt-cacher-ng/ is world-readable, but
+## AFAICT it's not *needed*, so appease "systemd-analyze security".
+UMask=0077
+EOF
+
+
+mkdir /mnt/etc/systemd/system/rsync.service.d
+cat >/mnt/etc/systemd/system/rsync.service.d/override.conf <<'EOF'
+[Service]
+# rsyncd needs network access
+PrivateNetwork=no
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+#IPAddressDeny=any
+#IPAddressAllow=localhost
+
+# We don't use User= here, because
+#  * the rsync package doesn't create one by default;
+#  * rsyncd needs CAP_NET_BIND to bind to the default port (873);
+#  * rsyncd needs CAP_SYS_CHROOT if you "use chroot"; and
+#  * rsyncd.conf can have >1 share, with *DIFFERENT* chroots and users.
+#User=my-rsync-user
+# We don't use PrivateUsers= here, because
+#  * rsyncd.conf doesn't use "numeric ids" by default.
+#PrivateUsers=yes
+# These don't really help, but they don't hurt either.
+RuntimeDirectory=rsync
+WorkingDirectory=/run/rsync
+
+# If you're just exporting something like /srv/rsync or /var/cache/foo,
+# all of these can be protected.
+PrivateDevices=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectControlGroups=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectSystem=strict
+# This is how you'd add just the exported areas, implicitly making everything else read-only.
+# NOTE: ReadOnlyPaths= is a lot harder to use, because
+# you'd need to whitelist things like /etc/rsyncd.conf and /lib/blah.
+#ReadWritePaths=-/srv/rsync /var/log/rsync
+# Adopt a hardline (EVERYTHING is read-only) by default, because
+#  * in rsyncd.conf, "read only" is on by default;
+#  * in rsyncd.conf, logging is via stdio by default (not /var/log nor /dev/log); and
+#  * (AFAIK) rsyncd is mostly "anonymous read-only" access, like FTP.
+ReadWritePaths=
+
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE CAP_SYS_CHROOT CAP_SETUID CAP_SETGID
+SystemCallArchitectures=native
+RestrictNamespaces=yes
+NoNewPrivileges=yes
+SystemCallFilter=@system-service chroot
+# SystemCallFilter=~@privileged @resources
+RestrictRealtime=yes
+LockPersonality=yes
+# WARNING: RemoveIPC= only works if you use User=!
+RemoveIPC=yes
+MemoryDenyWriteExecute=yes
+# I *think* this has no effect because rsyncd tends to chmod by default anyway.
+# It probably changes the permissions of logfiles if you use "log file" instead of stdout/syslog.
+UMask=0077
 EOF
