@@ -336,7 +336,7 @@ chroot /mnt apt install apparmor apparmor-profiles apparmor-utils libpam-apparmo
 chroot /mnt apt install ntpsec ntpsec-ntpdate  # FIXME: THIS IS FOR NEW ALPHA, **NOT** NEW OMEGA
 ##chroot /mnt apt install ntpsec-ntpviz gnuplot-nox gnuplot-qt-   # apache2-
 chroot /mnt apt install samba winbind smbclient libpam-krb5 krb5-user ldb-tools
-chroot /mnt apt install gitit pandoc texlive avahi-daemon-
+chroot /mnt apt install gitit pandoc texlive avahi-daemon- nodejs-
 chroot /mnt apt install strace curl w3m wget wget2 squashfs-tools hdparm
 chroot /mnt apt install emacs-nox emacs-el elpa-debian-el elpa-devscripts elpa-systemd
 chroot /mnt apt install build-essential devscripts dpkg-dev pkgconf at-
@@ -806,5 +806,69 @@ RestrictRealtime=yes
 LockPersonality=yes
 RemoveIPC=yes
 MemoryDenyWriteExecute=yes
+UMask=0077
+EOF
+
+
+mkdir /mnt/etc/systemd/system/apt-daily.service.d
+cat >/mnt/etc/systemd/system/apt-daily.service.d/override.conf <<'EOF'
+## WARNING: this assumes apt >= 1.4.1-4-g496313fb8
+##                    or apt >= 1.3.6-4-ga234cfe14.
+## Newer versions run postinsts in apt-daily-upgrade.service.
+## Older versions run postinsts in *this* unit, and will be upset by lockdown.
+
+[Service]
+
+# These things all seem to Just Work.
+DeviceAllow=
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+NoNewPrivileges=yes
+PrivateDevices=yes
+PrivateMounts=yes
+PrivateTmp=yes
+ProtectControlGroups=yes
+ProtectHome=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+SystemCallArchitectures=native
+
+# No PrivateNetwork=yes because HTTP mirrors are very common.
+# If your /etc/apt/sources.list.d only uses file: or cdrom:, you might lock this down further.
+# UPDATE: "apt-helper wait-online" runs "systemd-networkd-wait-online", which needs AF_NETLINK (to systemd-networkd).
+PrivateNetwork=no
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+#IPAddressDeny=any
+
+## We can't drop privileges here (User=_apt), because /var/lib/apt/lists is root:root.
+## Rely on apt to drop privileges correctly on its own.
+User=root
+RemoveIPC=no
+PrivateUsers=no
+CapabilityBoundingSet=CAP_SETUID CAP_SETGID
+
+# If non-default APT::Periodic::Download-Upgradeable-Packages is used,
+# "unattended-upgrades -d" runs, and it needs
+#  * write access to /var/log/unattended-upgrades/
+#  * write access to /run/unattended-upgrades.lock
+#  * write access to /run/unattended-upgrades.pid
+#
+# I don't *think* we actually use /var/log/apt or /var/log/dpkg.log, but
+# I'm granting write access to all of /var/log/ anyway, as "good enough".
+ProtectSystem=strict
+ReadWritePaths=-/var/lib/apt /var/cache/apt /var/log /run
+
+# With the "systemd-analyze security" recommended settings, apt-get coredumps.
+#SystemCallFilter=@system-service
+#SystemCallFilter=~@privileged @resources
+SystemCallFilter=@system-service
+
+# This removes group- and world-read access to:
+#   /var/lib/apt/periodic/*
+#   /var/lib/apt/lists/partial/*
+# It does NOT affect these:
+#   /var/lib/apt/lists/deb.debian.org_*
 UMask=0077
 EOF
