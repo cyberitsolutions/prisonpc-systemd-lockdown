@@ -753,3 +753,58 @@ chroot /mnt adduser mike adm
 #BROKEN# ## AFAICT it's not *needed*, so appease "systemd-analyze security".
 #BROKEN# UMask=0077
 #BROKEN# EOF
+
+
+mkdir /mnt/etc/systemd/system/fstrim.service.d
+cat >/mnt/etc/systemd/system/fstrim.service.d/override.conf <<'EOF'
+# fstrim's "active ingredient" is ioctl(openat('/mountpoint'), FITRIM).
+#
+# That is, it
+#   * MUST be able to see the mounts (ProtectHome &c)
+#   * MUST have CAP_SYS_ADMIN to issue the FITRIM (CapabilityBoundingSet)
+#   * MAY have -oro mounts (ReadWritePaths)
+#   * MAY have raw disk access blocked (PrivateDevices)
+#
+# UPDATE: fstrim.c:has_discard() needs sysfs access.
+#         AFAICT, that still works OK even with PrivateDevices=yes and Protect*=yes,
+#         but maybe I just got lucky.
+
+
+[Service]
+PrivateNetwork=yes
+RestrictAddressFamilies=AF_UNIX
+IPAddressDeny=any
+PrivateDevices=yes
+
+RuntimeDirectory=fstrim
+WorkingDirectory=/run/fstrim
+
+# With ProtectHome=yes, fstrim -Av silently ignores trimmable mounts at/under /home!
+ProtectHome=no
+# With ProtectTmp=yes, fstrim -Av silently ignores trimmable mounts at/under /tmp!
+# Enabled anyway, because /tmp is usually either 1) a tmpfs or 2) part of /.
+PrivateTmp=yes
+ProtectControlGroups=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+
+# CAP_SYS_ADMIN is needed to issue FITRIM ioctls.
+CapabilityBoundingSet=CAP_SYS_ADMIN
+# With User=nobody or PrivateUsers=yes, the ioctl fails.
+#User=nobody
+#PrivateUsers=yes
+
+ProtectSystem=strict
+ReadWritePaths=
+
+SystemCallArchitectures=native
+RestrictNamespaces=yes
+NoNewPrivileges=yes
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+RestrictRealtime=yes
+LockPersonality=yes
+RemoveIPC=yes
+MemoryDenyWriteExecute=yes
+UMask=0077
+EOF
