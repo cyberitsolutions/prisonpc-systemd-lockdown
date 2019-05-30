@@ -430,6 +430,21 @@ RemoveIPC=yes
 MemoryDenyWriteExecute=yes
 ## Not set because we *WANT* /var/log/ntpsec/temps.YYYY-MM-DD.gz to be world-readable.
 #Umask=
+
+# Resource exhaustion (i.e. DOS) isn't covered by "systemd-analyze security", but
+# WE care about it.  This is the lowest priority available.
+# See also logrotate.service.
+# MemoryHigh= mitigates read-once jobs flushing fscache (see https://github.com/Feh/nocache)
+# TasksMax= mitigates accidental forkbombs.
+# CPUQuota=100% limits the slice to equivalent of 100% of a single CPU core
+# CPUWeight=
+[Service]
+Nice=19
+CPUSchedulingPolicy=batch
+IOSchedulingClass=idle
+MemoryHigh=128M
+TasksMax=16
+CPUQuota=50%
 EOF
 
 
@@ -818,7 +833,6 @@ cat >/mnt/etc/systemd/system/apt-daily.service.d/override.conf <<'EOF'
 ## Older versions run postinsts in *this* unit, and will be upset by lockdown.
 
 [Service]
-
 # These things all seem to Just Work.
 DeviceAllow=
 LockPersonality=yes
@@ -871,4 +885,105 @@ SystemCallFilter=@system-service
 # It does NOT affect these:
 #   /var/lib/apt/lists/deb.debian.org_*
 UMask=0077
+
+# DOS-related security.
+# Declare that this is a batch job with slightly lower priority than the default.
+[Service]
+Nice=5
+CPUSchedulingPolicy=batch
+IOSchedulingClass=best-effort
+EOF
+
+
+for unit in cron-{hourly,daily,weekly,monthly}
+do
+    mkdir -p /mnt/etc/systemd/system/"$unit".service.d
+    cat  >/mnt/etc/systemd/system/"$unit".service.d/low-priority.conf <<-'EOF'
+	# Assume that timer-fired jobs (systemd-cron, logrotate, man-db)
+	# are low-priority batch jobs.
+	# Upstream already downgrades logrotate and man-db to LOWEST priority.
+	# We downgrade the others about halfway.
+	#
+	# Nice=0 is default; Nice=19 is nicest.
+	# IOSchedulingPriority=4 is the default, range is 0 through 7 inclusive.
+	[Service]
+	Nice=15
+	CPUSchedulingPolicy=batch
+	IOSchedulingClass=best-effort
+	IOSchedulingPriority=6
+	EOF
+done
+
+for unit in etckeeper systemd-tmpfiles-clean
+do
+    mkdir -p /mnt/etc/systemd/system/etckeeper.service.d
+    cat  >/mnt/etc/systemd/system/etckeeper.service.d/low-priority.conf <<-'EOF'
+	# Upstream sets idle but not nice or batch.
+	[Service]
+	Nice=19
+	CPUSchedulingPolicy=batch
+	#IOSchedulingClass=idle
+	EOF
+done
+
+
+
+mkdir /mnt/etc/systemd/system/logrotate.service.d
+cat >/mnt/etc/systemd/system/logrotate.service.d/override.conf <<-'EOF'
+# Debian's logrotate.service does some reasonable lockdown by default.
+#
+# Logrotate MUST be able to do variations on "pkill -HUP frobozzd",
+# to make frobozzd reopen its rotated logfile.
+# That means it probably needs e.g. AF_NETLINK for "systemctl kill -USR1".
+#
+# In principle the scripts could do arbitrary things (e.g. ejecting a tape), but
+# I think we can reasonably block those things by default and let weird users loosen them again.
+[Service]
+# Logrotate must be able to su/chown to arbitrary users.
+User=root
+PrivateUsers=no
+CapabilityBoundingSet=CAP_SETUID CAP_SETGID CAP_CHOWN
+RestrictNamespaces=yes
+
+# The "no brainer" lockdown options.
+LockPersonality=yes
+NoNewPrivileges=yes
+ProtectKernelTunables=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@resources
+UMask=0077
+
+# Upstream Debian doesn't PrivateHome= because of "userdir logging".
+# IMO if you log to /home/alice/virtualenv/frobozzd-1/log
+# instead of /var/log/frobozzd, you are bad and you SHOULD feel bad.
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=/var/log /var/lib/logrotate/
+
+# Upstream says MemoryDenyWriteExecute breaks gzip built with ASM686.
+# gzip w/ASM686 is not DFSG-compliant, so Debian is safe!
+MemoryDenyWriteExecute=yes
+
+# Upstream won't do this because you might do "mail me@example.com" to a logrotate.conf.
+# We do that via logcheck, so it's entirely reasonable to block lock this down.
+# NOTE: msmtp-mta needs PrivateNetwork=no.
+# NOTE: postfix maildrop needs AF_NETLINK.
+PrivateNetwork=yes
+RestrictAddressFamilies=AF_UNIX
+IPAddressDeny=any
+
+# Resource exhaustion (i.e. DOS) isn't covered by "systemd-analyze security", but
+# WE care about it
+# MemoryHigh= mitigates read-once jobs flushing fscache (see https://github.com/Feh/nocache)
+# TasksMax= mitigates accidental forkbombs.
+# CPUQuota=100% limits the slice to equivalent of 100% of a single CPU core
+# CPUWeight=
+# NOTE: upstream already sets Nice= and IOSchedulingClass=
+CPUSchedulingPolicy=batch
+TasksMax=16
+MemoryHigh=128M
+CPUQuota=50%
 EOF
