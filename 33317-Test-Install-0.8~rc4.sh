@@ -388,7 +388,7 @@ ExecReload=/bin/kill -HUP $MAINPID
 
 ProtectSystem=full
 RuntimeDirectory=charybdis
-NoNewPrivileges=true
+NoNewPrivileges=yes
 CapabilityBoundingSet=~CAP_SYS_ADMIN
 CapabilityBoundingSet=~CAP_DAC_OVERRIDE
 CapabilityBoundingSet=~CAP_SYS_CHROOT
@@ -824,7 +824,6 @@ MemoryDenyWriteExecute=yes
 UMask=0077
 EOF
 
-
 mkdir /mnt/etc/systemd/system/apt-daily.service.d
 cat >/mnt/etc/systemd/system/apt-daily.service.d/override.conf <<'EOF'
 ## WARNING: this assumes apt >= 1.4.1-4-g496313fb8
@@ -834,7 +833,7 @@ cat >/mnt/etc/systemd/system/apt-daily.service.d/override.conf <<'EOF'
 
 [Service]
 # These things all seem to Just Work.
-DeviceAllow=
+DevicePolicy=closed
 LockPersonality=yes
 MemoryDenyWriteExecute=yes
 NoNewPrivileges=yes
@@ -872,7 +871,7 @@ CapabilityBoundingSet=CAP_SETUID CAP_SETGID
 # I don't *think* we actually use /var/log/apt or /var/log/dpkg.log, but
 # I'm granting write access to all of /var/log/ anyway, as "good enough".
 ProtectSystem=strict
-ReadWritePaths=-/var/lib/apt /var/cache/apt /var/log /run
+ReadWritePaths=-/var/lib/apt /var/cache/apt /var/log /run /var/backups
 
 # With the "systemd-analyze security" recommended settings, apt-get coredumps.
 #SystemCallFilter=@system-service
@@ -986,4 +985,183 @@ CPUSchedulingPolicy=batch
 TasksMax=16
 MemoryHigh=128M
 CPUQuota=50%
+EOF
+
+
+mkdir /mnt/etc/systemd/system/cron.service.d
+cat >/mnt/etc/systemd/system/cron.service.d/override.conf <<-'EOF'
+# Cron needs to run farily arbitrary things, so there is little we can do to lock it down.
+# For example, it needs write access to /var and /home.
+# It needs to be able to use /usr/sbin/sendmail
+# Since I intend to use systemd-cron (not ISC Vixie cron),
+# I'm not even bothering to do cursory experimentation with this. --twb, May 2019
+EOF
+
+
+mkdir /mnt/etc/systemd/system/systemd-hwdb-update.service.d
+cat >/mnt/etc/systemd/system/systemd-hwdb-update.service.d/override.conf <<-'EOF'
+# This ultimately just calls src/libsystemd/sd-hwdb/hwdb-util.c:hwdb_update()
+# It merges text files /???/udev/hwdb.d/*.hwdb into a single binary /etc/udev/hwdb.bin.
+# Therefore, we can lock it down like billy-o, yay!
+[Service]
+
+# This is, like, the MOST OBVIOUS THING.
+ReadWritePaths=/etc/udev/
+
+# /etc/udev/hwdb.bin is root-owned.
+User=root
+
+# PrivateUsers=yes didn't work:
+#   Failed to set up user namespacing: Resource temporarily unavailable
+PrivateUsers=no
+
+PrivateNetwork=yes
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_UNIX
+DevicePolicy=closed
+RestrictNamespaces=yes
+IPAddressDeny=any
+NoNewPrivileges=yes
+PrivateDevices=yes
+PrivateMounts=yes
+ProtectControlGroups=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+RestrictRealtime=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+UMask=0077
+
+# Resource exhaustion (i.e. DOS) isn't covered by "systemd-analyze security", but
+# WE care about it.
+# NOTE: NOT setting IOSchedulingClass=idle, because this is part of early boot!
+TasksMax=1
+CPUSchedulingPolicy=batch
+CPUQuota=100%
+EOF
+
+
+mkdir /mnt/etc/systemd/system/systemd-udev-settle.service.d
+cat >/mnt/etc/systemd/system/systemd-udev-settle.service.d/override.conf <<-'EOF'
+# This unit is deprecated, because it doesn't do what people think it does.
+# People think it means "wait until all devices have appeared".
+# It actually means "wait until in-progress devices are fully processed".
+# As at Debian 10 / ZOL 0.8.0, ZFS is pulling this in, so we might as well lock it down.
+[Service]
+PrivateNetwork=yes
+DynamicUser=yes
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_UNIX
+RestrictNamespaces=yes
+DevicePolicy=closed
+IPAddressDeny=any
+NoNewPrivileges=yes
+PrivateDevices=yes
+# PrivateUsers=yes didn't work:
+#   Failed to set up user namespacing: Resource temporarily unavailable
+PrivateUsers=no
+ProtectControlGroups=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+RestrictRealtime=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+UMask=0077
+ReadWritePaths=
+# Resource exhaustion (i.e. DOS) isn't covered by "systemd-analyze security", but
+# WE care about it.
+# NOTE: NOT setting IOSchedulingClass=idle, because this is part of early boot!
+TasksMax=1
+CPUSchedulingPolicy=batch
+MemoryHigh=64M
+CPUQuota=25%
+EOF
+
+
+mkdir /mnt/etc/systemd/system/systemd-udev-trigger.service.d
+cat >/mnt/etc/systemd/system/systemd-udev-trigger.service.d/override.conf <<-'EOF'
+# I *THINK* this unit just writes things into /sys/, but that might be optimistic...
+# I'm frankly too scared to try locking this one down yet. ---twb, May 2019
+EOF
+
+
+mkdir /mnt/etc/systemd/system/systemd-udevd.service.d
+cat >/mnt/etc/systemd/system/systemd-udevd.service.d/override.conf <<-'EOF'
+# I'm frankly too scared to try locking this one down yet. ---twb, May 2019
+EOF
+
+## SKIPPING IFUPDOWN BECAUSE I ONLY USE SYSTEMD-NETWORKD (FOR NOW).
+# 81	ifupdown	/lib/systemd/system/ifup@.service
+# 81	ifupdown	/lib/systemd/system/ifupdown-pre.service
+# 81	ifupdown	/lib/systemd/system/ifupdown-wait-online.service
+# 81	ifupdown	/lib/systemd/system/networking.service
+
+mkdir /mnt/etc/systemd/system/rsyslog.service.d
+cat >/mnt/etc/systemd/system/rsyslog.service.d/override.conf <<-'EOF'
+# rsyslog can read and write log events from several places.
+# The main cases *I* care about are:
+#  1. Debian default - read from journald (& klog) and write to /var/log;
+#  2. Best-practice satellite log client - as #1, and write to RELP; &
+#  3. Best-practice central log server - as #1, and read from RELP (and legacy syslog).
+#
+# PS: Debian default enables omusrmsg, too, for e.g. "logger -p 0 IDIOT ON TTY1".
+#
+# I will cover #1 first, then have #2/#3 as an amendment.
+# Things like writing to a PostgreSQL database are not covered here.
+
+# Notes:
+#  • imuxsock needs AF_UNIX.
+#  • imklog needs CAP_SYS_ADMIN to read /proc/kmsg (i.e. dmesg).
+#  • omfile needs PrivateUsers=no to resolve "adm" group &c.
+[Service]
+PrivateNetwork=yes
+User=root
+RestrictAddressFamilies=AF_UNIX
+CapabilityBoundingSet=CAP_SYS_ADMIN
+RestrictNamespaces=yes
+DevicePolicy=closed
+IPAddressDeny=any
+NoNewPrivileges=yes
+PrivateDevices=yes
+PrivateTmp=yes
+PrivateUsers=no
+ProtectControlGroups=yes
+ProtectHome=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+SystemCallArchitectures=native
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+UMask=0077
+
+# Blocking @resources caused rsyslogd to hang during startup.
+# I haven't investigated why.
+SystemCallFilter=@system-service @resources
+SystemCallFilter=~@privileged
+
+ProtectSystem=strict
+ReadWritePaths=/var/log
+# Because postfix is chrooted, it puts a dropin into /etc/rsyslog.d/
+# asking imuxsock to listen inside the chroot (in addition to the
+# normal /dev/log or /run/systemd/journal/syslog).  All the other
+# rsyslog.d/ files in Debian 10 just make extra /var/log files.
+ReadWritePaths=-/var/spool/postfix
+
+##############################
+### Uncomment this block if you logging over the network.
+##############################
+# • imtcp/imudp need CAP_NET_BIND_SERVICE to use port 514.
+# • imtcp/imudp/imrelp/omrelp need AF_INET and AF_INET6.
+PrivateNetwork=no
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+IPAddressDeny=
 EOF
