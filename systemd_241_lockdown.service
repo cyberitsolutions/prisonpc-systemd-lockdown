@@ -169,12 +169,12 @@ UMask=0077
 #X#RestrictAddressFamilies=AF_INET4 AF_INET6
 #X#IPAddressDeny=
 # logrotate is a background batch job, so mark it as such.
-Nice=10
-CPUSchedulingPolicy=batch
-IOSchedulingClass=idle
-CPUQuota=100%
-TasksMax=16
-MemoryHigh=128M
+#Nice=10
+#CPUSchedulingPolicy=batch
+#IOSchedulingClass=idle
+#CPUQuota=100%
+#TasksMax=16
+#MemoryHigh=128M
 
 
 
@@ -182,12 +182,12 @@ MemoryHigh=128M
 ### EXAMPLE: httpd
 # httpd must listen on a low port then drop privs itself, because
 # it is NOT socket activated (cf. CUPS for a counterexample).
-User=
-PrivateUsers=no
-PrivateNetwork=no
-RestrictAddressFamilies=AF_INET4 AF_INET6
-CapabilityBoundingSet=CAP_NET_BIND_SERVICE
-IPAddressDeny=
+#User=
+#PrivateUsers=no
+#PrivateNetwork=no
+#RestrictAddressFamilies=AF_INET4 AF_INET6
+#CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+#IPAddressDeny=
 # httpd must have write access to logs, because
 # it does NOT use syslog or stdio.
-ReadWritePaths=-/var/log/httpd
+#ReadWritePaths=-/var/log/httpd
