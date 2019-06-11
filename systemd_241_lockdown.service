@@ -1,6 +1,12 @@
 # In Debian 10 Buster, systemd 241 provides "systemd-analyze security".
 # This tells you all the things you can do to constrain a service unit.
 #
+# USAGE:
+#   1. systemctl edit frobozz.service
+#   2. paste in this file, edit ALLOW rules, save, quit
+#   3. systemctl restart frobozz || systemctl status frobozz
+#   4. if it failed, go to 1
+#
 # The idea of this file is a combination of "default-deny" and
 # "defence-in-depth" doctrines.  If something should NEVER HAPPEN,
 # then it doesn't hurt to encoding that in the daemon *and* in
