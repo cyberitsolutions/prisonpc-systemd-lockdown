@@ -1525,7 +1525,7 @@ cat >/mnt/etc/systemd/system/smartd.service.d/override.conf <<-'EOF'
 PrivateNetwork=yes
 #DynamicUser=
 User=frobozzd
-# CapabilityBoundingSet=
+CapabilityBoundingSet=
 RestrictAddressFamilies=AF_UNIX
 RestrictNamespaces=yes
 DevicePolicy=closed
@@ -1633,6 +1633,7 @@ User=
 PrivateDevices=no
 DeviceAllow=block-sd
 DeviceAllow=block-blkext
+CapabilityBoundingSet=CAP_SYS_RAWIO
 # UPDATE: @raw-io isn't needed for AHCI (SATA), at least.
 #X#SystemCallFilter=@raw-io
 # FIXME: why does smartd need the ability to resolve other users?
@@ -1648,15 +1649,34 @@ PrivateUsers=no
 # This will fail unless we allow things the /usr/sbin/sendmail needs.
 # (NOTE: /usr/sbin/sendmail is a generic interface; it's not "the" sendmail!)
 # postfix maildrop needs AF_NETLINK
-# postfix maildrop needs write access to the spool
+# postfix maildrop needs write access to the spool (ReadWritePaths=)
 # postfix maildrop needs the setgid bit on /usr/bin/postdrop to work! (PrivateUsers=no)
 # postfix maildrop complains if INET/INET6 are blocked, even though
 #                  they're only used by other parts of postfix.
+#
+# FIXME: /usr/sbin/postdrop           is root:postdrop    -r-xr-sr-x
+#        /var/spool/postfix/maildrop/ is postfix:postdrop drwx-wx--T
+#        Normally postdrop's setgid bit gives it write access.
+#        To make that work, we need EITHER NoNewPrivileges=no, *OR*
+#        because smartd still runs as root, just allow CAP_DAC_OVERRIDE.
+#        systemd-analyze security rates both as severity 0.2.
 RestrictAddressFamilies=AF_NETLINK AF_INET AF_INET6
 ReadWritePaths=/var/spool/postfix/maildrop
 PrivateUsers=no
+CapabilityBoundingSet=CAP_DAC_OVERRIDE
+#X#NoNewPrivileges=no
 # msmtp-mta needs network access to the submission (587/tcp) server.
 #PrivateNetwork=no
 #RestrictAddressFamilies=AF_INET AF_INET6
 #IPAddressDeny=
+
+# # DEBUGGING - unblock all syscalls & devices
+# SystemCallFilter=
+# DevicePolicy=open
+
+# # DEBUGGING
+# Type=oneshot
+# ExecStart=
+# ExecStart=smartctl -d sat -a /dev/sda
+# ExecStart=mail -s TEST root
 EOF
