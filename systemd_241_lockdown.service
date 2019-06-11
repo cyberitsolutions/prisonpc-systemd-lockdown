@@ -177,7 +177,7 @@ UMask=0077
 # NOTE: msmtp-mta needs PrivateNetwork=no.
 # NOTE: postfix maildrop needs AF_NETLINK.
 #X#PrivateNetwork=no
-#X#RestrictAddressFamilies=AF_INET4 AF_INET6
+#X#RestrictAddressFamilies=AF_INET AF_INET6
 #X#IPAddressDeny=
 # logrotate is a background batch job, so mark it as such.
 #Nice=10
@@ -192,36 +192,76 @@ UMask=0077
 # nginx must listen on a low port then drop privs itself, because
 # it is NOT socket activated (cf. CUPS for a counterexample).
 # FIXME: why is AF_NETLINK needed?
-User=
-PrivateUsers=no
-PrivateNetwork=no
-RestrictAddressFamilies=AF_INET4 AF_INET6
-CapabilityBoundingSet=CAP_NET_BIND_SERVICE CAP_SETUID CAP_SETGID
-SystemCallFilter=@setuid
-IPAddressDeny=
-# FIXME: limiting to AF_UNIX AF_INET4 AF_INET6 **DID NOT WORK**.
-#            nginx: [emerg] socket() 0.0.0.0:80 failed (97: Address family not supported by protocol)
-#        As a workaround, BLACKLIST unused socket types (don't WHITELIST used socket types).
-RestrictAddressFamilies=
-RestrictAddressFamilies=~AF_PACKET AF_NETLINK
+#User=
+#PrivateUsers=no
+#PrivateNetwork=no
+#RestrictAddressFamilies=AF_INET AF_INET6
+#CapabilityBoundingSet=CAP_NET_BIND_SERVICE CAP_SETUID CAP_SETGID
+#SystemCallFilter=@setuid
+#IPAddressDeny=
 # nginx must have write access to logs, because
 # it does NOT use syslog or stdio.
-ReadWritePaths=/var/log/nginx
+#ReadWritePaths=/var/log/nginx
 # nginx wants write access to /run/nginx.pid.
-ReadWritePaths=/run
+#ReadWritePaths=/run
 # FIXME: instead change /run/nginx.pid to /run/nginx/nginx.pid!
 #X#RuntimeDirectory=nginx
 #X#PIDFile=/run/nginx/nginx.pid
 # nginx needs CAP_DAC_OVERRIDE because logrotate makes nginx's logs www-data:adm 640, but
 # nginx opens them as root *before* dropping privileges.
-CapabilityBoundingSet=CAP_DAC_OVERRIDE
+#CapabilityBoundingSet=CAP_DAC_OVERRIDE
 # This mitigates forkbombs.
 # Set a "high water mark" well above what we expect to reach, but
 # well below what a forkbomb could otherwise achieve.
 # Ref. http://nginx.org/en/docs/ngx_core_module.html#thread_pool
 #      http://nginx.org/en/docs/ngx_core_module.html#worker_processes
-TasksMax=1000
+#TasksMax=1000
 # HOST SPECIFIC: I have 8 CPU cores; nginx can have up to 4 cores.
-CPUQuota=400%
+#CPUQuota=400%
 # HOST SPECIFIC: I have 16GB of RAM; penalize nginx when it goes over 4GB.
-MemoryHigh=4GB
+#MemoryHigh=4G
+
+
+### EXAMPLE: smartd
+# WARNING: smartd.conf -M exec can do ARBITRARY THINGS.
+#          You may need to whitelist additional things.
+# smartd must run as root to have direct disk access?
+# FIXME: would User=smartd Group=disk be sufficient?
+#User=
+# smartd must be able to issue ioctls directly to disks.
+# FIXME: "block-sd" suffices for SATA and USB HDDs.
+#        What about other device types?
+#        (NOTE: /dev/nvme0 is char-nvme, and /dev/nvme0n1 is block-blkext)
+# FIXME: allowing block-blkext on a host without NVMe results in a warning from _PID=1!
+# FIXME: if both Allows are on the same line, and
+#        the above warning happens, the
+#        entire line is ignored (instead of just block-blkext)!
+#        Is that a systemd bug?  Ask upstream!
+#PrivateDevices=no
+#DeviceAllow=block-sd
+#DeviceAllow=block-blkext
+# UPDATE: @raw-io isn't needed for AHCI (SATA), at least.
+#X#SystemCallFilter=@raw-io
+# FIXME: why does smartd need the ability to resolve other users?
+#        Is it dropping privileges to "nobody" for some actions?
+#        With PrivateUsers=yes, all devices (wrongly) report:
+#            Device: /dev/sda, IE (SMART) not enabled, skip device
+#            Try 'smartctl -s on /dev/sda' to turn on SMART features
+#            Unable to monitor any SMART enabled devices. Try debug (-d) option. Exiting...
+#PrivateUsers=no
+# smartd on Debian will by default email you about problems (-m root).
+# smartd calls /usr/bin/mail, which calls /usr/sbin/sendmail.
+# This will fail unless we allow things the /usr/sbin/sendmail needs.
+# (NOTE: /usr/sbin/sendmail is a generic interface; it's not "the" sendmail!)
+# postfix maildrop needs AF_NETLINK
+# postfix maildrop needs write access to the spool
+# postfix maildrop needs the setgid bit on /usr/bin/postdrop to work! (PrivateUsers=no)
+# postfix maildrop complains if INET/INET6 are blocked, even though
+#                  they're only used by other parts of postfix.
+#RestrictAddressFamilies=AF_NETLINK AF_INET AF_INET6
+#ReadWritePaths=/var/spool/postfix/maildrop
+#PrivateUsers=no
+# msmtp-mta needs network access to the submission (587/tcp) server.
+#X#PrivateNetwork=no
+#X#RestrictAddressFamilies=AF_INET AF_INET6
+#X#IPAddressDeny=
