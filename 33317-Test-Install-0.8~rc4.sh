@@ -402,6 +402,7 @@ EOF
 ## And if we *do* turn on stats, expiring old ones sounds like a job for /etc/logrotate.d/!
 mkdir /mnt/etc/systemd/system/ntpsec-rotate-stats.service.d
 cat >/mnt/etc/systemd/system/ntpsec-rotate-stats.service.d/override.conf <<'EOF'
+# FIXME: convince upstream to use logrotate instead of an equivalent sh script!
 [Service]
 PrivateNetwork=yes
 User=ntpsec
@@ -422,14 +423,27 @@ IPAddressDeny=any
 SystemCallArchitectures=native
 RestrictNamespaces=yes
 NoNewPrivileges=yes
+
+# This is the conservative baseline suggested by "systemd-analyze security".
+# It breaks because gzip tries to call fchown(2).
+#SystemCallFilter=@system-service
+#SystemCallFilter=~@privileged @resources
+# This doesn't work because the aliases "overlap"
+#SystemCallFilter=@system-service @chown
+#SystemCallFilter=~@privileged @resources
+# Doing it as "add lots, then remove some, then re-add a little" works.
+# If that made no sense, try wdiffing before/after of "systemctl show",
+# to see the exact list of syscalls that end up in the allow list.
 SystemCallFilter=@system-service
 SystemCallFilter=~@privileged @resources
+SystemCallFilter=@chown
+
 RestrictRealtime=yes
 LockPersonality=yes
 RemoveIPC=yes
 MemoryDenyWriteExecute=yes
-## Not set because we *WANT* /var/log/ntpsec/temps.YYYY-MM-DD.gz to be world-readable.
-#Umask=
+# FIXME: ntpsec logs are world-readable.  Should we restrict them to e.g. adm group?
+UMask=0022
 
 # Resource exhaustion (i.e. DOS) isn't covered by "systemd-analyze security", but
 # WE care about it.  This is the lowest priority available.
@@ -944,6 +958,11 @@ PrivateUsers=no
 CapabilityBoundingSet=CAP_SETUID CAP_SETGID CAP_CHOWN
 RestrictNamespaces=yes
 
+# mariadb needs this because /var/log/mysql is mysql:adm 2750.
+# If root is an ordinary user (no DAC_OVERRIDE), she can't edit that.
+# Most logs are root:foo 77x or foo:root 77x, which works without this.
+CapabilityBoundingSet=CAP_DAC_OVERRIDE
+
 # The "no brainer" lockdown options.
 LockPersonality=yes
 NoNewPrivileges=yes
@@ -954,6 +973,9 @@ SystemCallArchitectures=native
 SystemCallFilter=@system-service
 SystemCallFilter=~@resources
 UMask=0077
+
+# FIXME: is this needed?  I *think* I needed it to rotate mysql/error.log.
+SystemCallFilter=@chown
 
 # Upstream Debian doesn't PrivateHome= because of "userdir logging".
 # IMO if you log to /home/alice/virtualenv/frobozzd-1/log
@@ -1165,3 +1187,98 @@ CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 IPAddressDeny=
 EOF
+
+
+mkdir /mnt/etc/systemd/system/man-db.service.d
+cat >/mnt/etc/systemd/system/man-db.service.d/override.conf <<-'EOF'
+# NOTE: Upstream already locks down User= Nice= IOSchedulingClass=.
+[Service]
+PrivateNetwork=yes
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_UNIX
+RestrictNamespaces=yes
+DevicePolicy=closed
+IPAddressDeny=any
+NoNewPrivileges=yes
+PrivateDevices=yes
+PrivateTmp=yes
+PrivateUsers=yes
+ProtectControlGroups=yes
+ProtectHome=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+RestrictRealtime=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RemoveIPC=yes
+UMask=0077
+ProtectSystem=strict
+ReadWritePaths=-/var/cache/man
+
+# Resource exhaustion (i.e. DOS) isn't covered by "systemd-analyze security".
+# I watched this run on a basic Debian 10 server,
+# it peaked at 16MB memory and 4 tasks.
+MemoryHigh=64M
+CPUSchedulingPolicy=batch
+TasksMax=16
+CPUQuota=25%
+EOF
+
+
+mkdir /mnt/etc/systemd/system/dbus.service.d
+cat >/mnt/etc/systemd/system/dbus.service.d/override.conf <<-'EOF'
+# I'm frankly too scared to try locking this one down yet. ---twb, May 2019
+
+# /join #systemd
+# 19:47 <twb> Does dbus.service need AF_INET6 access?
+# 19:47 <twb> Isn't it purely AF_UNIX?
+# 19:49 <grawity> normally it should be purely AF_UNIX
+# 19:50 <grawity> it's configurable to listen on TCP sockets, but if your system bus is bound to TCP, you have big problems
+# 19:50 <twb> I was gonna add some "systemd-analyze security" mojo to it, but since it's needed for things like "systemctl daemon-reload", I decided it was too scary
+# 19:50 <grawity> well, if you break it, systemctl can just fall back to the private socket
+# 19:51 <grawity> however... dbus-daemon *does* directly fork auto-activated bus services, if they do not have a corresponding systemd .service yet
+# 19:51 <grawity> and *those* might need AF_INET6 etc
+# 19:51 <twb> Interesting
+# 19:51 <grawity> though again, shouldn't be many of those left on the system bus
+# 19:52 <grawity> with most services either having systemd-based activation instead, or being non-activatable
+# 19:52 <grawity> busctl --system --activatable
+# 19:53 <grawity> I don't think I've recently had anything but dbus-daemon in my dbus.service cgroup, so that's fine
+# 19:53 <grawity> session/user bus is a different story, still most DE stuff activated directly
+EOF
+
+
+
+
+mkdir /mnt/etc/systemd/system/ssh.service.d
+cat >/mnt/etc/systemd/system/ssh.service.d/override.conf <<-'EOF'
+# /join #systemd
+# 19:56 <twb> If I lock down ssh.service, that doesn't affect users ssh'ing in, right?  Because they end up in a user slice, as confirmed in "systemctl status"
+# 19:57 <grawity> well, the user process still starts in ssh.service
+# 19:57 <grawity> it is moved to a different cgroup later, but that doesn't necessarily allow it to shake off all restrictions, e.g. seccomp
+# 19:57 <grawity> only those that are actually cgroup-bound
+# 19:58 <twb> does "cgroup-bound" also include ns stuff?  e.g. PrivateHome
+# 19:59 <grawity> no
+# 19:59 <twb> Owie
+# 20:00 <grawity> that's process-specific, a privileged process can e.g. umount systemd's "privacy" overlay or outright switch back to the initial namespace via /proc, but that isn't automatic at all
+# 20:01 <twb> Well, at a high level I'm asking what things from "systemd-analyze security ssh" I can put into ssh.service.d/twb.conf, without breaking user sessions that are started via ssh'ing in
+# 20:01 <grawity> probably very little
+# 20:02 <grawity> sshd already has decent privilege separation built in, though, so I'd say keep it as is
+# 20:02 <grawity> if anything, trying to contain it too much would just break the privsep feature
+# 20:03 <twb> The purpose of lockdown in the systemd unit isn't to replace lockdown in the daemon, it's defense-in-depth against bugs in the daemon
+# 20:04 <twb> OpenSSH itself is pretty good, but it can still be pwned by badness in third-party PAM or NSS modules
+# 20:05 <grawity> 1) don't use those, 2) PAM in particular kinda has to be privileged for many modules to do their job, doesn't it
+# 20:06 <twb> OpenSSH itself advises people just to leave UsePAM off entirely.  Of course, systemd-logind doesn't like that.
+# 20:07 <grawity> mostly because it's an OpenBSD thing and OpenBSD doesn't even have PAM
+EOF
+
+mkdir /mnt/etc/systemd/system/ssh@.service.d
+cat >/mnt/etc/systemd/system/ssh@.service.d/override.conf <<-'EOF'
+# The comments in ssh.service.d/override.conf apply here as well.
+EOF
+
+# 20:09 <twb> I assume getty@ and getty-serial@ go into the same bucket as ssh?
+# 20:10 <grawity> yes
+# 20:10 <twb> Righto
