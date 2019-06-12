@@ -157,12 +157,16 @@ UMask=0077
 #User=
 #PrivateUsers=no
 #CapabilityBoundingSet=CAP_SETUID CAP_SETGID CAP_CHOWN
-#SystemCallFilter=@chown
+#SystemCallFilter=@setuid @chown
 # /var/log/mysql is mysql:adm 2750, which
 # User=root cannot read without CAP_DAC_OVERRIDE.
 # Most other logs are "root:_ u+rwx" or "_:root g+rwx", which
 # User=root can read without CAP_DAC_OVERRIDE.
 #CapabilityBoundingSet=CAP_DAC_OVERRIDE
+# /var/log/postgresql is root:postgres 1775 (sticky).
+# /var/log/postgresql/* are postgres:adm 640.
+# logrotate apparently CAP_FOWNER to rotate these (FIXME: why?)
+#CapabilityBoundingSet=CAP_FOWNER
 # logrotate must edit its data & internal state.
 #ReadWritePaths=/var/log /var/lib/logrotate
 # Upstream Debian doesn't PrivateHome= because of "userdir logging".
@@ -180,9 +184,11 @@ UMask=0077
 #X#RestrictAddressFamilies=AF_INET AF_INET6
 #X#IPAddressDeny=
 # logrotate is a background batch job, so mark it as such.
-#Nice=10
+# Upstream logrotate's example unit does some of this already.
+#Nice=19
 #CPUSchedulingPolicy=batch
-#IOSchedulingClass=idle
+#IOSchedulingClass=best-effort
+#IOSchedulingPriority=7
 #CPUQuota=100%
 #TasksMax=16
 #MemoryHigh=128M
