@@ -929,8 +929,8 @@ done
 
 for unit in etckeeper systemd-tmpfiles-clean
 do
-    mkdir -p /mnt/etc/systemd/system/etckeeper.service.d
-    cat  >/mnt/etc/systemd/system/etckeeper.service.d/low-priority.conf <<-'EOF'
+    mkdir -p /mnt/etc/systemd/system/"$unit".service.d
+    cat  >/mnt/etc/systemd/system/"$unit".service.d/low-priority.conf <<-'EOF'
 	# Upstream sets idle but not nice or batch.
 	[Service]
 	Nice=19
@@ -940,74 +940,341 @@ do
 done
 
 
+for unit in logrotate man-db nginx smartd
+do
+    mkdir -p /mnt/etc/systemd/system/"$unit".service.d
+    cat  >/mnt/etc/systemd/system/"$unit".service.d/low-priority.conf <<-'EOF'
+	# In Debian 10 Buster, systemd 241 provides "systemd-analyze security".
+	# This tells you all the things you can do to constrain a service unit.
+	#
+	# USAGE:
+	#   1. systemctl edit frobozz.service
+	#   2. paste in this file, edit ALLOW rules, save, quit
+	#   3. systemctl restart frobozz || systemctl status frobozz
+	#   4. if it failed, go to 1
+	#
+	# The idea of this file is a combination of "default-deny" and
+	# "defence-in-depth" doctrines.  If something should NEVER HAPPEN,
+	# then it doesn't hurt to encoding that in the daemon *and* in
+	# systemd, *and* in AppArmor/SELinux!  That way, if one layer screws
+	# up, it will still be blocked.
+	#
+	# FOR EXAMPLE, dovecot.service should never need to modprobe netconsole.ko;
+	# if it tries that, something is DEEPLY wrong, and it can be blocked.
+	#
+	#
+	# While *I* think systemd lockdown should be "opt out", systemd only provides an "opt in" mechanism.
+	# That means every time systemd adds a new security feature, overworked daemon maintainers need to know about it and try turning it on.
+	# Otherwise, it does nothing.
+	#
+	# As a sysadmin, adding in opt-ins by hand gets a bit repetetive.
+	# The purpose of THIS FILE is to provide a reference to simplify that process.
+	# There are two parts:
+	#
+	#   1. DEFAULT DENY   (this is the same for all units)
+	#   2. ALLOW          (this is unit-specific and includes a rationale)
+	#
+	# Note that if a unit says Foo=bar Foo=baz, they (usually) "add together".
+	# To "zero out" a rule, you instead need Foo=bar Foo= Foo=baz, to get ONLY baz.
+	#
+	# WARNING: "systemd-analyze security" DOES NOT list ALL .service units.
+	# e.g. it lists rsync.service even if you have no /etc/rsyncd.conf.
+	# e.g. it omits logrotate.service even though a timer runs it.
+	#
+	# WARNING: DO NOT try to lock down getty or ssh.  Even though
+	# pam_systemd.so + logind cause the user session to be reparented into
+	# its own slice, grawity on #systemd says that lockdown of getty/ssh
+	# WILL still affect the user session.
+	#
+	# WARNING: be extra careful of anything with DefaultDependencies=no.
+	# These are usually early boot units, and
+	# some things like PrivateUsers= seem to Just Not Work for them?
+	#
+	# References:
+	#   https://manpages.debian.org/systemd.exec
+	#   https://manpages.debian.org/systemd.resource-control
 
-mkdir /mnt/etc/systemd/system/logrotate.service.d
-cat >/mnt/etc/systemd/system/logrotate.service.d/override.conf <<-'EOF'
-# Debian's logrotate.service does some reasonable lockdown by default.
-#
-# Logrotate MUST be able to do variations on "pkill -HUP frobozzd",
-# to make frobozzd reopen its rotated logfile.
-# That means it probably needs e.g. AF_NETLINK for "systemctl kill -USR1".
-#
-# In principle the scripts could do arbitrary things (e.g. ejecting a tape), but
-# I think we can reasonably block those things by default and let weird users loosen them again.
-[Service]
-# Logrotate must be able to su/chown to arbitrary users.
-User=root
+
+	######################################################################
+	# DEFAULT DENY
+	######################################################################
+	# The order of these rules is the order they appear in
+	# "systemd-analyze security foo", which is descending importance.
+	[Service]
+	PrivateNetwork=yes
+	#DynamicUser=
+	User=frobozzd
+	CapabilityBoundingSet=
+	RestrictAddressFamilies=AF_UNIX
+	RestrictNamespaces=yes
+	DevicePolicy=closed
+	IPAddressDeny=any
+	#KeyringMode=private
+	NoNewPrivileges=yes
+	PrivateDevices=yes
+	PrivateMounts=yes
+	PrivateTmp=yes
+	PrivateUsers=yes
+	ProtectControlGroups=yes
+	ProtectHome=yes
+	ProtectKernelModules=yes
+	ProtectKernelTunables=yes
+	ProtectSystem=strict
+	SystemCallArchitectures=native
+	#AmbientCapabilities=
+	SystemCallFilter=@system-service
+	SystemCallFilter=~@privileged @resources
+	RestrictRealtime=yes
+	#RootDirectory/RootImage=
+	#SupplementaryGroups=
+	#Delegate=
+	LockPersonality=yes
+	MemoryDenyWriteExecute=yes
+	UMask=0077
+
+	# systemd-analyze security doesn't mention this, but it's relevant!
+	# You might be tempted to downgrade ProtectSystem=strict to ProtectSystem=full.
+	# If you only need a couple of writable dirs, you can whitelist them specifically.
+	#ReadWritePaths=
+	#ReadWritePaths=/var/lib/frobozz
+	#ReadWritePaths=-/var/log/frobozz /var/cache/frobozz
+
+	# When a daemon wants to make /run/frobozz.pid,
+	# you might be tempted to ProtectSystem=full or ReadWritePaths=/run.
+	# It is tighter to RuntimeDirectory=frobozz and tell the daemon to use
+	# /run/frobozz/frobozz.pid.
+
+	# systemd-analyze security does not consider service denial attacks.  We do!
+	# Some need tuning for the host's hardware/load/role.
+	# Therefore I am leaving them as "opt in" for now.
+	# These three are equivalent to "nice ionice -c3 chrt --idle 0".
+	# It puts it at the back of the queue when it comes to resource allocation.
+	# These are appropriate for "cron job" type processes, but NOT daemons.
+	#Nice=10
+	#CPUSchedulingPolicy=batch
+	#IOSchedulingClass=idle
+	# This says it can use up to one CPU core's worth of time.
+	# It's appropriate for things SHOULD be single threaded.
+	# It's not appropriate for things like pigz or xz -T0.
+	# This is likely to be a hardware-specific choice.
+	#CPUQuota=100%
+	# This mitigates forkbombs.
+	# Even something like apache can probably set a high mark here.
+	#TasksMax=16
+	# SHORT VERSION: use MemoryHigh= (instead of nocache) for jobs like updatedb.
+	# LONG VERSION follows.
+	# RAM is faster than HDD, so Linux uses idle RAM as an HDD cache, the "page cache".
+	# When apps need more RAM, part of the page cache must be thrown away.
+	# The "page replacement algorithm" decides which page is least useful.
+	# As at 2019, the default PRA ("LRU") is old and stupid.
+	# https://linux-mm.org/PageReplacementDesign
+	# As at 2019, an alternative is not ready.
+	# https://linux-mm.org/AdvancedPageReplacement
+	#
+	# In the meantime, a workload that reads a lot of disk blocks ONCE
+	# will trick the LRU into flushing the page cache, ruining read I/O for other processes.
+	# Examples include: updatedb, du, find.
+	#
+	# When your unit acts like one of these, you can wrap it in nocache,
+	# which uses LD_PRELOAD to add FADV_DONTNEED to most disk I/O.
+	# https://github.com/Feh/nocache
+	#
+	# A more robust alternative is to set MemoryHigh= to more than the
+	# process needs, but much less than the amount of RAM you have.
+	# Because MemoryHigh= count includes page cache,
+	# it should prevent the unit from flushing the WHOLE page cache.
+	# https://www.kernel.org/doc/Documentation/cgroup-v2.txt
+	# It is hard to know in advance what a good number for this should be.
+	# This is likely to be a unit-specific choice.
+	# Some units will scale with load, e.g. dovecot, postfix, apache.
+	# Some units won't scale with load, e.g. man-db.
+	#MemoryHigh=128M
+
+
+	EOF
+done
+
+
+
+cat  >>/mnt/etc/systemd/system/logrotate.service.d/low-priority.conf <<-'EOF'
+######################################################################
+# OPT-IN ALLOW (WITH RATIONALE)
+######################################################################
+### EXAMPLE: logrotate
+# WARNING: logrotate postrotate scripts can do arbitrary things.
+#          You may need to whitelist additional things.
+# logrotate must su/chown arbitrary daemon user accounts.
+User=
 PrivateUsers=no
 CapabilityBoundingSet=CAP_SETUID CAP_SETGID CAP_CHOWN
-RestrictNamespaces=yes
-
-# mariadb needs this because /var/log/mysql is mysql:adm 2750.
-# If root is an ordinary user (no DAC_OVERRIDE), she can't edit that.
-# Most logs are root:foo 77x or foo:root 77x, which works without this.
+SystemCallFilter=@setuid @chown
+# /var/log/mysql is mysql:adm 2750, which
+# User=root cannot read without CAP_DAC_OVERRIDE.
+# Most other logs are "root:_ u+rwx" or "_:root g+rwx", which
+# User=root can read without CAP_DAC_OVERRIDE.
 CapabilityBoundingSet=CAP_DAC_OVERRIDE
-
-# The "no brainer" lockdown options.
-LockPersonality=yes
-NoNewPrivileges=yes
-ProtectKernelTunables=yes
-RestrictNamespaces=yes
-RestrictRealtime=yes
-SystemCallArchitectures=native
-SystemCallFilter=@system-service
-SystemCallFilter=~@resources
-UMask=0077
-
-# FIXME: is this needed?  I *think* I needed it to rotate mysql/error.log.
-SystemCallFilter=@chown
-
+# /var/log/postgresql is root:postgres 1775 (sticky).
+# /var/log/postgresql/* are postgres:adm 640.
+# logrotate apparently CAP_FOWNER to rotate these (FIXME: why?)
+CapabilityBoundingSet=CAP_FOWNER
+# logrotate must edit its data & internal state.
+ReadWritePaths=/var/log /var/lib/logrotate
 # Upstream Debian doesn't PrivateHome= because of "userdir logging".
 # IMO if you log to /home/alice/virtualenv/frobozzd-1/log
 # instead of /var/log/frobozzd, you are bad and you SHOULD feel bad.
-ProtectHome=yes
-ProtectSystem=strict
-ReadWritePaths=/var/log /var/lib/logrotate/
-
+#X#ProtectHome=no
 # Upstream says MemoryDenyWriteExecute breaks gzip built with ASM686.
 # gzip w/ASM686 is not DFSG-compliant, so Debian is safe!
-MemoryDenyWriteExecute=yes
-
+#X#MemoryDenyWriteExecute=no
 # Upstream won't do this because you might do "mail me@example.com" to a logrotate.conf.
 # We do that via logcheck, so it's entirely reasonable to block lock this down.
 # NOTE: msmtp-mta needs PrivateNetwork=no.
 # NOTE: postfix maildrop needs AF_NETLINK.
-PrivateNetwork=yes
-RestrictAddressFamilies=AF_UNIX
-IPAddressDeny=any
-
-# Resource exhaustion (i.e. DOS) isn't covered by "systemd-analyze security", but
-# WE care about it
-# MemoryHigh= mitigates read-once jobs flushing fscache (see https://github.com/Feh/nocache)
-# TasksMax= mitigates accidental forkbombs.
-# CPUQuota=100% limits the slice to equivalent of 100% of a single CPU core
-# CPUWeight=
-# NOTE: upstream already sets Nice= and IOSchedulingClass=
+#X#PrivateNetwork=no
+#X#RestrictAddressFamilies=AF_INET AF_INET6
+#X#IPAddressDeny=
+# logrotate is a background batch job, so mark it as such.
+# Upstream logrotate's example unit does some of this already.
+Nice=19
 CPUSchedulingPolicy=batch
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+CPUQuota=100%
 TasksMax=16
 MemoryHigh=128M
-CPUQuota=50%
 EOF
+
+cat  >>/mnt/etc/systemd/system/man-db.service.d/low-priority.conf <<-'EOF'
+######################################################################
+# OPT-IN ALLOW (WITH RATIONALE)
+######################################################################
+# Upstream does User=man already; we just need to undo our standard User=frobozz ^_^;;
+User=man
+# man-db needs write access to its cache dir.
+ReadWritePaths=-/var/cache/man
+# man-db needs access to fchown(2).
+SystemCallFilter=@chown
+# I watched this run on a basic Debian 10 server,
+# it peaked at 16MB memory and 4 tasks.
+# NOTE: Upstream already locks down User= Nice= IOSchedulingClass=.
+MemoryHigh=64M
+TasksMax=16
+CPUSchedulingPolicy=batch
+EOF
+
+cat >>/mnt/etc/systemd/system/nginx.service.d/override.conf <<-'EOF'
+######################################################################
+# OPT-IN ALLOW (WITH RATIONALE)
+######################################################################
+# nginx must listen on a low port then drop privs itself, because
+# it is NOT socket activated (cf. CUPS for a counterexample).
+# FIXME: why is AF_NETLINK needed?
+User=
+PrivateUsers=no
+PrivateNetwork=no
+RestrictAddressFamilies=AF_INET AF_INET6
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE CAP_SETUID CAP_SETGID
+SystemCallFilter=@setuid
+IPAddressDeny=
+# nginx must have write access to logs, because
+# it does NOT use syslog or stdio.
+ReadWritePaths=/var/log/nginx
+# nginx wants write access to /run/nginx.pid.
+ReadWritePaths=/run
+# FIXME: instead change /run/nginx.pid to /run/nginx/nginx.pid!
+#X#RuntimeDirectory=nginx
+#X#PIDFile=/run/nginx/nginx.pid
+# nginx needs CAP_DAC_OVERRIDE because logrotate makes nginx's logs www-data:adm 640, but
+# nginx opens them as root *before* dropping privileges.
+CapabilityBoundingSet=CAP_DAC_OVERRIDE
+
+# This mitigates forkbombs.
+# Set a "high water mark" well above what we expect to reach, but
+# well below what a forkbomb could otherwise achieve.
+# Ref. http://nginx.org/en/docs/ngx_core_module.html#thread_pool
+#      http://nginx.org/en/docs/ngx_core_module.html#worker_processes
+TasksMax=1000
+# HOST SPECIFIC: I have 8 CPU cores; nginx can have up to 4 cores.
+CPUQuota=400%
+# HOST SPECIFIC: I have 16GB of RAM; penalize nginx when it goes over 4GB.
+MemoryHigh=4G
+EOF
+
+
+cat >>/mnt/etc/systemd/system/smartd.service.d/override.conf <<-'EOF'
+######################################################################
+# OPT-IN ALLOW (WITH RATIONALE)
+######################################################################
+
+# WARNING: smartd.conf -M exec can do ARBITRARY THINGS.
+#          You may need to whitelist additional things.
+# smartd must run as root to have direct disk access?
+# FIXME: would User=smartd Group=disk be sufficient?
+User=
+# smartd must be able to issue ioctls directly to disks.
+# FIXME: "block-sd" suffices for SATA and USB HDDs.
+#        What about other device types?
+#        (NOTE: /dev/nvme0 is char-nvme, and /dev/nvme0n1 is block-blkext)
+# FIXME: allowing block-blkext on a host without NVMe results in a warning from _PID=1!
+# FIXME: if both Allows are on the same line, and
+#        the above warning happens, the
+#        entire line is ignored (instead of just block-blkext)!
+#        Is that a systemd bug?  Ask upstream!
+PrivateDevices=no
+DeviceAllow=block-sd
+DeviceAllow=block-blkext
+CapabilityBoundingSet=CAP_SYS_RAWIO
+# UPDATE: @raw-io isn't needed for AHCI (SATA), at least.
+#X#SystemCallFilter=@raw-io
+# FIXME: why does smartd need the ability to resolve other users?
+#        Is it dropping privileges to "nobody" for some actions?
+#        With PrivateUsers=yes, all devices (wrongly) report:
+#            Device: /dev/sda, IE (SMART) not enabled, skip device
+#            Try 'smartctl -s on /dev/sda' to turn on SMART features
+#            Unable to monitor any SMART enabled devices. Try debug (-d) option. Exiting...
+PrivateUsers=no
+
+# smartd on Debian will by default email you about problems (-m root).
+# smartd calls /usr/bin/mail, which calls /usr/sbin/sendmail.
+# This will fail unless we allow things the /usr/sbin/sendmail needs.
+# (NOTE: /usr/sbin/sendmail is a generic interface; it's not "the" sendmail!)
+# postfix maildrop needs AF_NETLINK
+# postfix maildrop needs write access to the spool (ReadWritePaths=)
+# postfix maildrop needs the setgid bit on /usr/bin/postdrop to work! (PrivateUsers=no)
+# postfix maildrop complains if INET/INET6 are blocked, even though
+#                  they're only used by other parts of postfix.
+#
+# FIXME: /usr/sbin/postdrop           is root:postdrop    -r-xr-sr-x
+#        /var/spool/postfix/maildrop/ is postfix:postdrop drwx-wx--T
+#        Normally postdrop's setgid bit gives it write access.
+#        To make that work, we need EITHER NoNewPrivileges=no, *OR*
+#        because smartd still runs as root, just allow CAP_DAC_OVERRIDE.
+#        systemd-analyze security rates both as severity 0.2.
+RestrictAddressFamilies=AF_NETLINK AF_INET AF_INET6
+ReadWritePaths=/var/spool/postfix/maildrop
+PrivateUsers=no
+CapabilityBoundingSet=CAP_DAC_OVERRIDE
+#X#NoNewPrivileges=no
+# msmtp-mta needs network access to the submission (587/tcp) server.
+#PrivateNetwork=no
+#RestrictAddressFamilies=AF_INET AF_INET6
+#IPAddressDeny=
+
+# # DEBUGGING - unblock all syscalls & devices
+# SystemCallFilter=
+# DevicePolicy=open
+
+# # DEBUGGING
+# Type=oneshot
+# ExecStart=
+# ExecStart=smartctl -d sat -a /dev/sda
+# ExecStart=mail -s TEST root
+EOF
+
+
+######################################################################
+######################################################################
+######################################################################
 
 
 mkdir /mnt/etc/systemd/system/cron.service.d
@@ -1189,183 +1456,6 @@ IPAddressDeny=
 EOF
 
 
-mkdir /mnt/etc/systemd/system/man-db.service.d
-cat >/mnt/etc/systemd/system/man-db.service.d/override.conf <<-'EOF'
-# In Debian 10 Buster, systemd 241 provides "systemd-analyze security".
-# This tells you all the things you can do to constrain a service unit.
-#
-# USAGE:
-#   1. systemctl edit frobozz.service
-#   2. paste in this file, edit ALLOW rules, save, quit
-#   3. systemctl restart frobozz || systemctl status frobozz
-#   4. if it failed, go to 1
-#
-# The idea of this file is a combination of "default-deny" and
-# "defence-in-depth" doctrines.  If something should NEVER HAPPEN,
-# then it doesn't hurt to encoding that in the daemon *and* in
-# systemd, *and* in AppArmor/SELinux!  That way, if one layer screws
-# up, it will still be blocked.
-#
-# FOR EXAMPLE, dovecot.service should never need to modprobe netconsole.ko;
-# if it tries that, something is DEEPLY wrong, and it can be blocked.
-#
-#
-# While *I* think systemd lockdown should be "opt out", systemd only provides an "opt in" mechanism.
-# That means every time systemd adds a new security feature, overworked daemon maintainers need to know about it and try turning it on.
-# Otherwise, it does nothing.
-#
-# As a sysadmin, adding in opt-ins by hand gets a bit repetetive.
-# The purpose of THIS FILE is to provide a reference to simplify that process.
-# There are two parts:
-#
-#   1. DEFAULT DENY   (this is the same for all units)
-#   2. ALLOW          (this is unit-specific and includes a rationale)
-#
-# Note that if a unit says Foo=bar Foo=baz, they (usually) "add together".
-# To "zero out" a rule, you instead need Foo=bar Foo= Foo=baz, to get ONLY baz.
-#
-# WARNING: "systemd-analyze security" DOES NOT list ALL .service units.
-# e.g. it lists rsync.service even if you have no /etc/rsyncd.conf.
-# e.g. it omits logrotate.service even though a timer runs it.
-#
-# WARNING: DO NOT try to lock down getty or ssh.  Even though
-# pam_systemd.so + logind cause the user session to be reparented into
-# its own slice, grawity on #systemd says that lockdown of getty/ssh
-# WILL still affect the user session.
-#
-# WARNING: be extra careful of anything with DefaultDependencies=no.
-# These are usually early boot units, and
-# some things like PrivateUsers= seem to Just Not Work for them?
-#
-# References:
-#   https://manpages.debian.org/systemd.exec
-#   https://manpages.debian.org/systemd.resource-control
-
-
-######################################################################
-# DEFAULT DENY
-######################################################################
-# The order of these rules is the order they appear in
-# "systemd-analyze security foo", which is descending importance.
-[Service]
-PrivateNetwork=yes
-#DynamicUser=
-User=frobozzd
-CapabilityBoundingSet=
-RestrictAddressFamilies=AF_UNIX
-RestrictNamespaces=yes
-DevicePolicy=closed
-IPAddressDeny=any
-#KeyringMode=private
-NoNewPrivileges=yes
-PrivateDevices=yes
-PrivateMounts=yes
-PrivateTmp=yes
-PrivateUsers=yes
-ProtectControlGroups=yes
-ProtectHome=yes
-ProtectKernelModules=yes
-ProtectKernelTunables=yes
-ProtectSystem=strict
-SystemCallArchitectures=native
-#AmbientCapabilities=
-SystemCallFilter=@system-service
-SystemCallFilter=~@privileged @resources
-RestrictRealtime=yes
-#RootDirectory/RootImage=
-#SupplementaryGroups=
-#Delegate=
-LockPersonality=yes
-MemoryDenyWriteExecute=yes
-UMask=0077
-
-# systemd-analyze security doesn't mention this, but it's relevant!
-# You might be tempted to downgrade ProtectSystem=strict to ProtectSystem=full.
-# If you only need a couple of writable dirs, you can whitelist them specifically.
-#ReadWritePaths=
-#ReadWritePaths=/var/lib/frobozz
-#ReadWritePaths=-/var/log/frobozz /var/cache/frobozz
-
-# When a daemon wants to make /run/frobozz.pid,
-# you might be tempted to ProtectSystem=full or ReadWritePaths=/run.
-# It is tighter to RuntimeDirectory=frobozz and tell the daemon to use
-# /run/frobozz/frobozz.pid.
-
-# systemd-analyze security does not consider service denial attacks.  We do!
-# Some need tuning for the host's hardware/load/role.
-# Therefore I am leaving them as "opt in" for now.
-# These three are equivalent to "nice ionice -c3 chrt --idle 0".
-# It puts it at the back of the queue when it comes to resource allocation.
-# These are appropriate for "cron job" type processes, but NOT daemons.
-#Nice=10
-#CPUSchedulingPolicy=batch
-#IOSchedulingClass=idle
-# This says it can use up to one CPU core's worth of time.
-# It's appropriate for things SHOULD be single threaded.
-# It's not appropriate for things like pigz or xz -T0.
-# This is likely to be a hardware-specific choice.
-#CPUQuota=100%
-# This mitigates forkbombs.
-# Even something like apache can probably set a high mark here.
-#TasksMax=16
-# SHORT VERSION: use MemoryHigh= (instead of nocache) for jobs like updatedb.
-# LONG VERSION follows.
-# RAM is faster than HDD, so Linux uses idle RAM as an HDD cache, the "page cache".
-# When apps need more RAM, part of the page cache must be thrown away.
-# The "page replacement algorithm" decides which page is least useful.
-# As at 2019, the default PRA ("LRU") is old and stupid.
-# https://linux-mm.org/PageReplacementDesign
-# As at 2019, an alternative is not ready.
-# https://linux-mm.org/AdvancedPageReplacement
-#
-# In the meantime, a workload that reads a lot of disk blocks ONCE
-# will trick the LRU into flushing the page cache, ruining read I/O for other processes.
-# Examples include: updatedb, du, find.
-#
-# When your unit acts like one of these, you can wrap it in nocache,
-# which uses LD_PRELOAD to add FADV_DONTNEED to most disk I/O.
-# https://github.com/Feh/nocache
-#
-# A more robust alternative is to set MemoryHigh= to more than the
-# process needs, but much less than the amount of RAM you have.
-# Because MemoryHigh= count includes page cache,
-# it should prevent the unit from flushing the WHOLE page cache.
-# https://www.kernel.org/doc/Documentation/cgroup-v2.txt
-# It is hard to know in advance what a good number for this should be.
-# This is likely to be a unit-specific choice.
-# Some units will scale with load, e.g. dovecot, postfix, apache.
-# Some units won't scale with load, e.g. man-db.
-#MemoryHigh=128M
-
-
-######################################################################
-# OPT-IN ALLOW (WITH RATIONALE)
-######################################################################
-
-# Upstream does User=man already; we just need to undo our standard User=frobozz ^_^;;
-User=man
-# man-db needs write access to its cache dir.
-ReadWritePaths=-/var/cache/man
-# man-db needs access to fchown(2).
-SystemCallFilter=@chown
-
-# I watched this run on a basic Debian 10 server,
-# it peaked at 16MB memory and 4 tasks.
-# NOTE: Upstream already locks down User= Nice= IOSchedulingClass=.
-MemoryHigh=64M
-TasksMax=16
-CPUSchedulingPolicy=batch
-
-
-# DEBUGGING
-# ExecStart=
-# ExecStart=+/usr/bin/install --verbose -d -o man -g man -m 0755 /var/cache/man
-# # Expunge old catman pages which have not been read in a week.
-# ExecStart=/usr/bin/find /var/cache/man -type f -name *.gz -atime +6 -printf 'deleting %p...\n' -delete
-# # Regenerate man database.
-# ExecStart=/usr/bin/mandb
-
-EOF
 
 
 mkdir /mnt/etc/systemd/system/dbus.service.d
@@ -1422,401 +1512,3 @@ EOF
 # 20:09 <twb> I assume getty@ and getty-serial@ go into the same bucket as ssh?
 # 20:10 <grawity> yes
 # 20:10 <twb> Righto
-
-
-mkdir /mnt/etc/systemd/system/nginx.service.d
-cat >/mnt/etc/systemd/system/nginx.service.d/override.conf <<-'EOF'
-# In Debian 10 Buster, systemd 241 provides "systemd-analyze security".
-# This tells you all the things you can do to constrain a service unit.
-#
-# The idea of this file is a combination of "default-deny" and
-# "defence-in-depth" doctrines.  If something should NEVER HAPPEN,
-# then it doesn't hurt to encoding that in the daemon *and* in
-# systemd, *and* in AppArmor/SELinux!  That way, if one layer screws
-# up, it will still be blocked.
-#
-# FOR EXAMPLE, dovecot.service should never need to modprobe netconsole.ko;
-# if it tries that, something is DEEPLY wrong, and it can be blocked.
-#
-#
-# While *I* think systemd lockdown should be "opt out", systemd only provides an "opt in" mechanism.
-# That means every time systemd adds a new security feature, overworked daemon maintainers need to know about it and try turning it on.
-# Otherwise, it does nothing.
-#
-# As a sysadmin, adding in opt-ins by hand gets a bit repetetive.
-# The purpose of THIS FILE is to provide a reference to simplify that process.
-# There are two parts:
-#
-#   1. DEFAULT DENY   (this is the same for all units)
-#   2. ALLOW          (this is unit-specific and includes a rationale)
-#
-# Note that if a unit says Foo=bar Foo=baz, they (usually) "add together".
-# To "zero out" a rule, you instead need Foo=bar Foo= Foo=baz, to get ONLY baz.
-#
-# WARNING: "systemd-analyze security" DOES NOT list ALL .service units.
-# e.g. it lists rsync.service even if you have no /etc/rsyncd.conf.
-# e.g. it omits logrotate.service even though a timer runs it.
-#
-# WARNING: DO NOT try to lock down getty or ssh.  Even though
-# pam_systemd.so + logind cause the user session to be reparented into
-# its own slice, grawity on #systemd says that lockdown of getty/ssh
-# WILL still affect the user session.
-#
-# WARNING: be extra careful of anything with DefaultDependencies=no.
-# These are usually early boot units, and
-# some things like PrivateUsers= seem to Just Not Work for them?
-#
-# References:
-#   https://manpages.debian.org/systemd.exec
-#   https://manpages.debian.org/systemd.resource-control
-
-
-######################################################################
-# DEFAULT DENY
-######################################################################
-# The order of these rules is the order they appear in
-# "systemd-analyze security foo", which is descending importance.
-[Service]
-PrivateNetwork=yes
-#DynamicUser=
-User=frobozzd
-CapabilityBoundingSet=
-# RestrictAddressFamilies=AF_UNIX
-RestrictNamespaces=yes
-DevicePolicy=closed
-IPAddressDeny=any
-#KeyringMode=private
-NoNewPrivileges=yes
-PrivateDevices=yes
-PrivateMounts=yes
-PrivateTmp=yes
-PrivateUsers=yes
-ProtectControlGroups=yes
-ProtectHome=yes
-ProtectKernelModules=yes
-ProtectKernelTunables=yes
-ProtectSystem=strict
-SystemCallArchitectures=native
-#AmbientCapabilities=
-SystemCallFilter=@system-service
-SystemCallFilter=~@privileged @resources
-RestrictRealtime=yes
-#RootDirectory/RootImage=
-#SupplementaryGroups=
-#Delegate=
-LockPersonality=yes
-MemoryDenyWriteExecute=yes
-UMask=0077
-
-# systemd-analyze security doesn't mention this, but it's relevant!
-# You might be tempted to downgrade ProtectSystem=strict to ProtectSystem=full.
-# If you only need a couple of writable dirs, you can whitelist them specifically.
-#ReadWritePaths=
-#ReadWritePaths=/var/lib/frobozz
-#ReadWritePaths=-/var/log/frobozz /var/cache/frobozz
-
-# systemd-analyze security does not consider service denial attacks.  We do!
-# Some need tuning for the host's hardware/load/role.
-# Therefore I am leaving them as "opt in" for now.
-# These three are equivalent to "nice ionice -c3 chrt --idle 0".
-# It puts it at the back of the queue when it comes to resource allocation.
-# These are appropriate for "cron job" type processes, but NOT daemons.
-#Nice=10
-#CPUSchedulingPolicy=batch
-#IOSchedulingClass=idle
-# This says it can use up to one CPU core's worth of time.
-# It's appropriate for things SHOULD be single threaded.
-# It's not appropriate for things like pigz or xz -T0.
-# This is likely to be a hardware-specific choice.
-#CPUQuota=100%
-# This mitigates forkbombs.
-# Even something like apache can probably set a high mark here.
-#TasksMax=16
-# SHORT VERSION: use MemoryHigh= (instead of nocache) for jobs like updatedb.
-# LONG VERSION follows.
-# RAM is faster than HDD, so Linux uses idle RAM as an HDD cache, the "page cache".
-# When apps need more RAM, part of the page cache must be thrown away.
-# The "page replacement algorithm" decides which page is least useful.
-# As at 2019, the default PRA ("LRU") is old and stupid.
-# https://linux-mm.org/PageReplacementDesign
-# As at 2019, an alternative is not ready.
-# https://linux-mm.org/AdvancedPageReplacement
-#
-# In the meantime, a workload that reads a lot of disk blocks ONCE
-# will trick the LRU into flushing the page cache, ruining read I/O for other processes.
-# Examples include: updatedb, du, find.
-#
-# When your unit acts like one of these, you can wrap it in nocache,
-# which uses LD_PRELOAD to add FADV_DONTNEED to most disk I/O.
-# https://github.com/Feh/nocache
-#
-# A more robust alternative is to set MemoryHigh= to more than the
-# process needs, but much less than the amount of RAM you have.
-# Because MemoryHigh= count includes page cache,
-# it should prevent the unit from flushing the WHOLE page cache.
-# https://www.kernel.org/doc/Documentation/cgroup-v2.txt
-# It is hard to know in advance what a good number for this should be.
-# This is likely to be a unit-specific choice.
-# Some units will scale with load, e.g. dovecot, postfix, apache.
-# Some units won't scale with load, e.g. man-db.
-#MemoryHigh=128M
-
-
-######################################################################
-# OPT-IN ALLOW (WITH RATIONALE)
-######################################################################
-
-
-# nginx must listen on a low port then drop privs itself, because
-# it is NOT socket activated (cf. CUPS for a counterexample).
-# FIXME: why is AF_NETLINK needed?
-User=
-PrivateUsers=no
-PrivateNetwork=no
-RestrictAddressFamilies=AF_INET AF_INET6
-CapabilityBoundingSet=CAP_NET_BIND_SERVICE CAP_SETUID CAP_SETGID
-SystemCallFilter=@setuid
-IPAddressDeny=
-# nginx must have write access to logs, because
-# it does NOT use syslog or stdio.
-ReadWritePaths=/var/log/nginx
-# nginx wants write access to /run/nginx.pid.
-ReadWritePaths=/run
-# FIXME: instead change /run/nginx.pid to /run/nginx/nginx.pid!
-#X#RuntimeDirectory=nginx
-#X#PIDFile=/run/nginx/nginx.pid
-# nginx needs CAP_DAC_OVERRIDE because logrotate makes nginx's logs www-data:adm 640, but
-# nginx opens them as root *before* dropping privileges.
-CapabilityBoundingSet=CAP_DAC_OVERRIDE
-
-# This mitigates forkbombs.
-# Set a "high water mark" well above what we expect to reach, but
-# well below what a forkbomb could otherwise achieve.
-# Ref. http://nginx.org/en/docs/ngx_core_module.html#thread_pool
-#      http://nginx.org/en/docs/ngx_core_module.html#worker_processes
-TasksMax=1000
-# HOST SPECIFIC: I have 8 CPU cores; nginx can have up to 4 cores.
-CPUQuota=400%
-# HOST SPECIFIC: I have 16GB of RAM; penalize nginx when it goes over 4GB.
-MemoryHigh=4G
-EOF
-
-
-
-mkdir /mnt/etc/systemd/system/smartd.service.d
-cat >/mnt/etc/systemd/system/smartd.service.d/override.conf <<-'EOF'
-# In Debian 10 Buster, systemd 241 provides "systemd-analyze security".
-# This tells you all the things you can do to constrain a service unit.
-#
-# USAGE:
-#   1. systemctl edit frobozz.service
-#   2. paste in this file, edit ALLOW rules, save, quit
-#   3. systemctl restart frobozz || systemctl status frobozz
-#   4. if it failed, go to 1
-#
-# The idea of this file is a combination of "default-deny" and
-# "defence-in-depth" doctrines.  If something should NEVER HAPPEN,
-# then it doesn't hurt to encoding that in the daemon *and* in
-# systemd, *and* in AppArmor/SELinux!  That way, if one layer screws
-# up, it will still be blocked.
-#
-# FOR EXAMPLE, dovecot.service should never need to modprobe netconsole.ko;
-# if it tries that, something is DEEPLY wrong, and it can be blocked.
-#
-#
-# While *I* think systemd lockdown should be "opt out", systemd only provides an "opt in" mechanism.
-# That means every time systemd adds a new security feature, overworked daemon maintainers need to know about it and try turning it on.
-# Otherwise, it does nothing.
-#
-# As a sysadmin, adding in opt-ins by hand gets a bit repetetive.
-# The purpose of THIS FILE is to provide a reference to simplify that process.
-# There are two parts:
-#
-#   1. DEFAULT DENY   (this is the same for all units)
-#   2. ALLOW          (this is unit-specific and includes a rationale)
-#
-# Note that if a unit says Foo=bar Foo=baz, they (usually) "add together".
-# To "zero out" a rule, you instead need Foo=bar Foo= Foo=baz, to get ONLY baz.
-#
-# WARNING: "systemd-analyze security" DOES NOT list ALL .service units.
-# e.g. it lists rsync.service even if you have no /etc/rsyncd.conf.
-# e.g. it omits logrotate.service even though a timer runs it.
-#
-# WARNING: DO NOT try to lock down getty or ssh.  Even though
-# pam_systemd.so + logind cause the user session to be reparented into
-# its own slice, grawity on #systemd says that lockdown of getty/ssh
-# WILL still affect the user session.
-#
-# WARNING: be extra careful of anything with DefaultDependencies=no.
-# These are usually early boot units, and
-# some things like PrivateUsers= seem to Just Not Work for them?
-#
-# References:
-#   https://manpages.debian.org/systemd.exec
-#   https://manpages.debian.org/systemd.resource-control
-
-
-######################################################################
-# DEFAULT DENY
-######################################################################
-# The order of these rules is the order they appear in
-# "systemd-analyze security foo", which is descending importance.
-[Service]
-PrivateNetwork=yes
-#DynamicUser=
-User=frobozzd
-CapabilityBoundingSet=
-RestrictAddressFamilies=AF_UNIX
-RestrictNamespaces=yes
-DevicePolicy=closed
-IPAddressDeny=any
-#KeyringMode=private
-NoNewPrivileges=yes
-PrivateDevices=yes
-PrivateMounts=yes
-PrivateTmp=yes
-PrivateUsers=yes
-ProtectControlGroups=yes
-ProtectHome=yes
-ProtectKernelModules=yes
-ProtectKernelTunables=yes
-ProtectSystem=strict
-SystemCallArchitectures=native
-#AmbientCapabilities=
-SystemCallFilter=@system-service
-SystemCallFilter=~@privileged @resources
-RestrictRealtime=yes
-#RootDirectory/RootImage=
-#SupplementaryGroups=
-#Delegate=
-LockPersonality=yes
-MemoryDenyWriteExecute=yes
-UMask=0077
-
-# systemd-analyze security doesn't mention this, but it's relevant!
-# You might be tempted to downgrade ProtectSystem=strict to ProtectSystem=full.
-# If you only need a couple of writable dirs, you can whitelist them specifically.
-#ReadWritePaths=
-#ReadWritePaths=/var/lib/frobozz
-#ReadWritePaths=-/var/log/frobozz /var/cache/frobozz
-
-# When a daemon wants to make /run/frobozz.pid,
-# you might be tempted to ProtectSystem=full or ReadWritePaths=/run.
-# It is tighter to RuntimeDirectory=frobozz and tell the daemon to use
-# /run/frobozz/frobozz.pid.
-
-# systemd-analyze security does not consider service denial attacks.  We do!
-# Some need tuning for the host's hardware/load/role.
-# Therefore I am leaving them as "opt in" for now.
-# These three are equivalent to "nice ionice -c3 chrt --idle 0".
-# It puts it at the back of the queue when it comes to resource allocation.
-# These are appropriate for "cron job" type processes, but NOT daemons.
-#Nice=10
-#CPUSchedulingPolicy=batch
-#IOSchedulingClass=idle
-# This says it can use up to one CPU core's worth of time.
-# It's appropriate for things SHOULD be single threaded.
-# It's not appropriate for things like pigz or xz -T0.
-# This is likely to be a hardware-specific choice.
-#CPUQuota=100%
-# This mitigates forkbombs.
-# Even something like apache can probably set a high mark here.
-#TasksMax=16
-# SHORT VERSION: use MemoryHigh= (instead of nocache) for jobs like updatedb.
-# LONG VERSION follows.
-# RAM is faster than HDD, so Linux uses idle RAM as an HDD cache, the "page cache".
-# When apps need more RAM, part of the page cache must be thrown away.
-# The "page replacement algorithm" decides which page is least useful.
-# As at 2019, the default PRA ("LRU") is old and stupid.
-# https://linux-mm.org/PageReplacementDesign
-# As at 2019, an alternative is not ready.
-# https://linux-mm.org/AdvancedPageReplacement
-#
-# In the meantime, a workload that reads a lot of disk blocks ONCE
-# will trick the LRU into flushing the page cache, ruining read I/O for other processes.
-# Examples include: updatedb, du, find.
-#
-# When your unit acts like one of these, you can wrap it in nocache,
-# which uses LD_PRELOAD to add FADV_DONTNEED to most disk I/O.
-# https://github.com/Feh/nocache
-#
-# A more robust alternative is to set MemoryHigh= to more than the
-# process needs, but much less than the amount of RAM you have.
-# Because MemoryHigh= count includes page cache,
-# it should prevent the unit from flushing the WHOLE page cache.
-# https://www.kernel.org/doc/Documentation/cgroup-v2.txt
-# It is hard to know in advance what a good number for this should be.
-# This is likely to be a unit-specific choice.
-# Some units will scale with load, e.g. dovecot, postfix, apache.
-# Some units won't scale with load, e.g. man-db.
-#MemoryHigh=128M
-
-
-######################################################################
-# OPT-IN ALLOW (WITH RATIONALE)
-######################################################################
-
-# WARNING: smartd.conf -M exec can do ARBITRARY THINGS.
-#          You may need to whitelist additional things.
-# smartd must run as root to have direct disk access?
-# FIXME: would User=smartd Group=disk be sufficient?
-User=
-# smartd must be able to issue ioctls directly to disks.
-# FIXME: "block-sd" suffices for SATA and USB HDDs.
-#        What about other device types?
-#        (NOTE: /dev/nvme0 is char-nvme, and /dev/nvme0n1 is block-blkext)
-# FIXME: allowing block-blkext on a host without NVMe results in a warning from _PID=1!
-# FIXME: if both Allows are on the same line, and
-#        the above warning happens, the
-#        entire line is ignored (instead of just block-blkext)!
-#        Is that a systemd bug?  Ask upstream!
-PrivateDevices=no
-DeviceAllow=block-sd
-DeviceAllow=block-blkext
-CapabilityBoundingSet=CAP_SYS_RAWIO
-# UPDATE: @raw-io isn't needed for AHCI (SATA), at least.
-#X#SystemCallFilter=@raw-io
-# FIXME: why does smartd need the ability to resolve other users?
-#        Is it dropping privileges to "nobody" for some actions?
-#        With PrivateUsers=yes, all devices (wrongly) report:
-#            Device: /dev/sda, IE (SMART) not enabled, skip device
-#            Try 'smartctl -s on /dev/sda' to turn on SMART features
-#            Unable to monitor any SMART enabled devices. Try debug (-d) option. Exiting...
-PrivateUsers=no
-
-# smartd on Debian will by default email you about problems (-m root).
-# smartd calls /usr/bin/mail, which calls /usr/sbin/sendmail.
-# This will fail unless we allow things the /usr/sbin/sendmail needs.
-# (NOTE: /usr/sbin/sendmail is a generic interface; it's not "the" sendmail!)
-# postfix maildrop needs AF_NETLINK
-# postfix maildrop needs write access to the spool (ReadWritePaths=)
-# postfix maildrop needs the setgid bit on /usr/bin/postdrop to work! (PrivateUsers=no)
-# postfix maildrop complains if INET/INET6 are blocked, even though
-#                  they're only used by other parts of postfix.
-#
-# FIXME: /usr/sbin/postdrop           is root:postdrop    -r-xr-sr-x
-#        /var/spool/postfix/maildrop/ is postfix:postdrop drwx-wx--T
-#        Normally postdrop's setgid bit gives it write access.
-#        To make that work, we need EITHER NoNewPrivileges=no, *OR*
-#        because smartd still runs as root, just allow CAP_DAC_OVERRIDE.
-#        systemd-analyze security rates both as severity 0.2.
-RestrictAddressFamilies=AF_NETLINK AF_INET AF_INET6
-ReadWritePaths=/var/spool/postfix/maildrop
-PrivateUsers=no
-CapabilityBoundingSet=CAP_DAC_OVERRIDE
-#X#NoNewPrivileges=no
-# msmtp-mta needs network access to the submission (587/tcp) server.
-#PrivateNetwork=no
-#RestrictAddressFamilies=AF_INET AF_INET6
-#IPAddressDeny=
-
-# # DEBUGGING - unblock all syscalls & devices
-# SystemCallFilter=
-# DevicePolicy=open
-
-# # DEBUGGING
-# Type=oneshot
-# ExecStart=
-# ExecStart=smartctl -d sat -a /dev/sda
-# ExecStart=mail -s TEST root
-EOF
