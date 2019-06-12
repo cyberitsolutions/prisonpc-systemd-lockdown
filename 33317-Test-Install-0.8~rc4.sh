@@ -397,70 +397,6 @@ CapabilityBoundingSet=~CAP_SYS_CHROOT
 WantedBy=multi-user.target
 EOF
 
-## This script is total shit, and it's only actually used when statistics are enabled in ntp.conf.
-## We should probably just "systemctl disable" its corresponding .timer unit.
-## And if we *do* turn on stats, expiring old ones sounds like a job for /etc/logrotate.d/!
-mkdir /mnt/etc/systemd/system/ntpsec-rotate-stats.service.d
-cat >/mnt/etc/systemd/system/ntpsec-rotate-stats.service.d/override.conf <<'EOF'
-# FIXME: convince upstream to use logrotate instead of an equivalent sh script!
-[Service]
-PrivateNetwork=yes
-User=ntpsec
-PrivateUsers=yes
-PrivateNetwork=yes
-CapabilityBoundingSet=
-RestrictAddressFamilies=AF_UNIX
-PrivateDevices=yes
-PrivateTmp=yes
-ProtectHome=yes
-ProtectControlGroups=yes
-ProtectKernelModules=yes
-ProtectKernelTunables=yes
-ProtectSystem=strict
-ReadWritePaths=-/var/log/ntpsec/
-WorkingDirectory=/var/log/ntpsec
-IPAddressDeny=any
-SystemCallArchitectures=native
-RestrictNamespaces=yes
-NoNewPrivileges=yes
-
-# This is the conservative baseline suggested by "systemd-analyze security".
-# It breaks because gzip tries to call fchown(2).
-#SystemCallFilter=@system-service
-#SystemCallFilter=~@privileged @resources
-# This doesn't work because the aliases "overlap"
-#SystemCallFilter=@system-service @chown
-#SystemCallFilter=~@privileged @resources
-# Doing it as "add lots, then remove some, then re-add a little" works.
-# If that made no sense, try wdiffing before/after of "systemctl show",
-# to see the exact list of syscalls that end up in the allow list.
-SystemCallFilter=@system-service
-SystemCallFilter=~@privileged @resources
-SystemCallFilter=@chown
-
-RestrictRealtime=yes
-LockPersonality=yes
-RemoveIPC=yes
-MemoryDenyWriteExecute=yes
-# FIXME: ntpsec logs are world-readable.  Should we restrict them to e.g. adm group?
-UMask=0022
-
-# Resource exhaustion (i.e. DOS) isn't covered by "systemd-analyze security", but
-# WE care about it.  This is the lowest priority available.
-# See also logrotate.service.
-# MemoryHigh= mitigates read-once jobs flushing fscache (see https://github.com/Feh/nocache)
-# TasksMax= mitigates accidental forkbombs.
-# CPUQuota=100% limits the slice to equivalent of 100% of a single CPU core
-# CPUWeight=
-[Service]
-Nice=19
-CPUSchedulingPolicy=batch
-IOSchedulingClass=idle
-MemoryHigh=128M
-TasksMax=16
-CPUQuota=50%
-EOF
-
 
 mkdir /mnt/etc/systemd/system.conf.d
 cat >/mnt/etc/systemd/system.conf.d/override.conf <<'EOF'
@@ -940,10 +876,10 @@ do
 done
 
 
-for unit in logrotate man-db nginx smartd
+for unit in logrotate man-db nginx smartd ntpsec-rotate-stats systemd-hwdb-update
 do
     mkdir -p /mnt/etc/systemd/system/"$unit".service.d
-    cat  >/mnt/etc/systemd/system/"$unit".service.d/low-priority.conf <<-'EOF'
+    cat  >/mnt/etc/systemd/system/"$unit".service.d/00-default-deny.conf <<-'EOF'
 	# In Debian 10 Buster, systemd 241 provides "systemd-analyze security".
 	# This tells you all the things you can do to constrain a service unit.
 	#
@@ -1096,7 +1032,7 @@ done
 
 
 
-cat  >>/mnt/etc/systemd/system/logrotate.service.d/low-priority.conf <<-'EOF'
+cat >/mnt/etc/systemd/system/logrotate.service.d/01-documented-allow.conf <<-'EOF'
 ######################################################################
 # OPT-IN ALLOW (WITH RATIONALE)
 ######################################################################
@@ -1144,7 +1080,7 @@ TasksMax=16
 MemoryHigh=128M
 EOF
 
-cat  >>/mnt/etc/systemd/system/man-db.service.d/low-priority.conf <<-'EOF'
+cat >/mnt/etc/systemd/system/man-db.service.d/01-documented-allow.conf <<-'EOF'
 ######################################################################
 # OPT-IN ALLOW (WITH RATIONALE)
 ######################################################################
@@ -1162,7 +1098,7 @@ TasksMax=16
 CPUSchedulingPolicy=batch
 EOF
 
-cat >>/mnt/etc/systemd/system/nginx.service.d/override.conf <<-'EOF'
+cat >/mnt/etc/systemd/system/nginx.service.d/01-documented-allow.conf <<-'EOF'
 ######################################################################
 # OPT-IN ALLOW (WITH RATIONALE)
 ######################################################################
@@ -1201,7 +1137,7 @@ MemoryHigh=4G
 EOF
 
 
-cat >>/mnt/etc/systemd/system/smartd.service.d/override.conf <<-'EOF'
+cat >/mnt/etc/systemd/system/smartd.service.d/01-documented-allow.conf <<-'EOF'
 ######################################################################
 # OPT-IN ALLOW (WITH RATIONALE)
 ######################################################################
@@ -1271,6 +1207,45 @@ CapabilityBoundingSet=CAP_DAC_OVERRIDE
 # ExecStart=mail -s TEST root
 EOF
 
+cat >/mnt/etc/systemd/system/ntpsec-rotate-stats.service.d/01-documented-allow.conf <<'EOF'
+######################################################################
+# OPT-IN ALLOW (WITH RATIONALE)
+######################################################################
+# FIXME: convince upstream to use logrotate instead of an equivalent sh script!
+User=ntpsec
+ReadWritePaths=-/var/log/ntpsec/
+# gzip needs fchown(2), even when it's a noop.
+SystemCallFilter=@chown
+# FIXME: ntpsec logs are world-readable.  Should we restrict them to e.g. adm group?
+UMask=0022
+# This is a background batch job (like logrotate.service), so mark it as such.
+Nice=19
+CPUSchedulingPolicy=batch
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+CPUQuota=100%
+TasksMax=16
+MemoryHigh=128M
+EOF
+
+cat >/mnt/etc/systemd/system/systemd-hwdb-update.service.d/01-documented-allow.conf <<'EOF'
+######################################################################
+# OPT-IN ALLOW (WITH RATIONALE)
+######################################################################
+# This unit is just src/libsystemd/sd-hwdb/hwdb-util.c:hwdb_update().
+# It merges text files /???/udev/hwdb.d/*.hwdb into a single binary
+# file /etc/udev/hwdb.bin.
+#
+# Must be able to write to root-owned /etc/udev/hwdb.bin.
+User=root
+ReadWritePaths=/etc/udev/
+# PrivateUsers=yes didn't work; I got this:
+#   Failed to set up user namespacing: Resource temporarily unavailable
+PrivateUsers=no
+# NOTE: NOT setting IOSchedulingClass=idle, because this is part of early boot!
+TasksMax=1
+CPUSchedulingPolicy=batch
+EOF
 
 ######################################################################
 ######################################################################

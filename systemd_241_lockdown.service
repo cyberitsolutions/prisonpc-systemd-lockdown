@@ -154,21 +154,21 @@ UMask=0077
 # WARNING: logrotate postrotate scripts can do arbitrary things.
 #          You may need to whitelist additional things.
 # logrotate must su/chown arbitrary daemon user accounts.
-#User=
-#PrivateUsers=no
-#CapabilityBoundingSet=CAP_SETUID CAP_SETGID CAP_CHOWN
-#SystemCallFilter=@setuid @chown
+User=
+PrivateUsers=no
+CapabilityBoundingSet=CAP_SETUID CAP_SETGID CAP_CHOWN
+SystemCallFilter=@setuid @chown
 # /var/log/mysql is mysql:adm 2750, which
 # User=root cannot read without CAP_DAC_OVERRIDE.
 # Most other logs are "root:_ u+rwx" or "_:root g+rwx", which
 # User=root can read without CAP_DAC_OVERRIDE.
-#CapabilityBoundingSet=CAP_DAC_OVERRIDE
+CapabilityBoundingSet=CAP_DAC_OVERRIDE
 # /var/log/postgresql is root:postgres 1775 (sticky).
 # /var/log/postgresql/* are postgres:adm 640.
 # logrotate apparently CAP_FOWNER to rotate these (FIXME: why?)
-#CapabilityBoundingSet=CAP_FOWNER
+CapabilityBoundingSet=CAP_FOWNER
 # logrotate must edit its data & internal state.
-#ReadWritePaths=/var/log /var/lib/logrotate
+ReadWritePaths=/var/log /var/lib/logrotate
 # Upstream Debian doesn't PrivateHome= because of "userdir logging".
 # IMO if you log to /home/alice/virtualenv/frobozzd-1/log
 # instead of /var/log/frobozzd, you are bad and you SHOULD feel bad.
@@ -185,47 +185,47 @@ UMask=0077
 #X#IPAddressDeny=
 # logrotate is a background batch job, so mark it as such.
 # Upstream logrotate's example unit does some of this already.
-#Nice=19
-#CPUSchedulingPolicy=batch
-#IOSchedulingClass=best-effort
-#IOSchedulingPriority=7
-#CPUQuota=100%
-#TasksMax=16
-#MemoryHigh=128M
+Nice=19
+CPUSchedulingPolicy=batch
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+CPUQuota=100%
+TasksMax=16
+MemoryHigh=128M
 
 
 ### EXAMPLE: nginx
 # nginx must listen on a low port then drop privs itself, because
 # it is NOT socket activated (cf. CUPS for a counterexample).
 # FIXME: why is AF_NETLINK needed?
-#User=
-#PrivateUsers=no
-#PrivateNetwork=no
-#RestrictAddressFamilies=AF_INET AF_INET6
-#CapabilityBoundingSet=CAP_NET_BIND_SERVICE CAP_SETUID CAP_SETGID
-#SystemCallFilter=@setuid
-#IPAddressDeny=
+User=
+PrivateUsers=no
+PrivateNetwork=no
+RestrictAddressFamilies=AF_INET AF_INET6
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE CAP_SETUID CAP_SETGID
+SystemCallFilter=@setuid
+IPAddressDeny=
 # nginx must have write access to logs, because
 # it does NOT use syslog or stdio.
-#ReadWritePaths=/var/log/nginx
+ReadWritePaths=/var/log/nginx
 # nginx wants write access to /run/nginx.pid.
-#ReadWritePaths=/run
+ReadWritePaths=/run
 # FIXME: instead change /run/nginx.pid to /run/nginx/nginx.pid!
 #X#RuntimeDirectory=nginx
 #X#PIDFile=/run/nginx/nginx.pid
 # nginx needs CAP_DAC_OVERRIDE because logrotate makes nginx's logs www-data:adm 640, but
 # nginx opens them as root *before* dropping privileges.
-#CapabilityBoundingSet=CAP_DAC_OVERRIDE
+CapabilityBoundingSet=CAP_DAC_OVERRIDE
 # This mitigates forkbombs.
 # Set a "high water mark" well above what we expect to reach, but
 # well below what a forkbomb could otherwise achieve.
 # Ref. http://nginx.org/en/docs/ngx_core_module.html#thread_pool
 #      http://nginx.org/en/docs/ngx_core_module.html#worker_processes
-#TasksMax=1000
+TasksMax=1000
 # HOST SPECIFIC: I have 8 CPU cores; nginx can have up to 4 cores.
-#CPUQuota=400%
+CPUQuota=400%
 # HOST SPECIFIC: I have 16GB of RAM; penalize nginx when it goes over 4GB.
-#MemoryHigh=4G
+MemoryHigh=4G
 
 
 ### EXAMPLE: smartd
@@ -233,7 +233,7 @@ UMask=0077
 #          You may need to whitelist additional things.
 # smartd must run as root to have direct disk access?
 # FIXME: would User=smartd Group=disk be sufficient?
-#User=
+User=
 # smartd must be able to issue ioctls directly to disks.
 # FIXME: "block-sd" suffices for SATA and USB HDDs.
 #        What about other device types?
@@ -243,10 +243,10 @@ UMask=0077
 #        the above warning happens, the
 #        entire line is ignored (instead of just block-blkext)!
 #        Is that a systemd bug?  Ask upstream!
-#PrivateDevices=no
-#DeviceAllow=block-sd
-#DeviceAllow=block-blkext
-#CapabilityBoundingSet=CAP_SYS_RAWIO
+PrivateDevices=no
+DeviceAllow=block-sd
+DeviceAllow=block-blkext
+CapabilityBoundingSet=CAP_SYS_RAWIO
 # UPDATE: @raw-io isn't needed for AHCI (SATA), at least.
 #X#SystemCallFilter=@raw-io
 # FIXME: why does smartd need the ability to resolve other users?
@@ -255,7 +255,7 @@ UMask=0077
 #            Device: /dev/sda, IE (SMART) not enabled, skip device
 #            Try 'smartctl -s on /dev/sda' to turn on SMART features
 #            Unable to monitor any SMART enabled devices. Try debug (-d) option. Exiting...
-#PrivateUsers=no
+PrivateUsers=no
 # smartd on Debian will by default email you about problems (-m root).
 # smartd calls /usr/bin/mail, which calls /usr/sbin/sendmail.
 # This will fail unless we allow things the /usr/sbin/sendmail needs.
@@ -272,12 +272,23 @@ UMask=0077
 #        To make that work, we need EITHER NoNewPrivileges=no, *OR*
 #        because smartd still runs as root, just allow CAP_DAC_OVERRIDE.
 #        systemd-analyze security rates both as severity 0.2.
-#RestrictAddressFamilies=AF_NETLINK AF_INET AF_INET6
-#ReadWritePaths=/var/spool/postfix/maildrop
-#PrivateUsers=no
-#CapabilityBoundingSet=CAP_DAC_OVERRIDE
+RestrictAddressFamilies=AF_NETLINK AF_INET AF_INET6
+ReadWritePaths=/var/spool/postfix/maildrop
+PrivateUsers=no
+CapabilityBoundingSet=CAP_DAC_OVERRIDE
 #X#NoNewPrivileges=no
 # msmtp-mta needs network access to the submission (587/tcp) server.
-#PrivateNetwork=no
-#RestrictAddressFamilies=AF_INET AF_INET6
-#IPAddressDeny=
+#X#PrivateNetwork=no
+#X#RestrictAddressFamilies=AF_INET AF_INET6
+#X#IPAddressDeny=
+
+
+
+######################################################################
+# Backport issues for Debian 9 Stretch
+######################################################################
+# Unknown lvalue 'IPAddressDeny' in section 'Service'
+# Unknown lvalue 'PrivateMounts' in section 'Service'
+# Don't know system call group, ignoring: @system-service
+# Unknown lvalue 'LockPersonality' in section 'Service'
+# Unknown lvalue 'IPAddressDeny' in section 'Service'
