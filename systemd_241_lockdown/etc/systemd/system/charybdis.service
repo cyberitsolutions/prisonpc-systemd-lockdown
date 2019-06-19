@@ -1,0 +1,21 @@
+[Unit]
+Description=Charybdis IRC server
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=forking
+User=charybdis
+ExecStartPre=/usr/bin/charybdis -conftest
+ExecStart=/usr/bin/charybdis
+ExecReload=/bin/kill -HUP $MAINPID
+
+ProtectSystem=full
+RuntimeDirectory=charybdis
+NoNewPrivileges=yes
+CapabilityBoundingSet=~CAP_SYS_ADMIN
+CapabilityBoundingSet=~CAP_DAC_OVERRIDE
+CapabilityBoundingSet=~CAP_SYS_CHROOT
+
+[Install]
+WantedBy=multi-user.target
