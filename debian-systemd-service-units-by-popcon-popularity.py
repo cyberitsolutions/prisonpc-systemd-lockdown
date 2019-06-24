@@ -51,7 +51,7 @@ with sqlite3.connect(':memory:') as conn:
     #conn.execute('PRAGMA foreign_keys = 1')
     conn.execute('CREATE TABLE CVEs (source_package TEXT PRIMARY KEY, rank INTEGER NOT NULL)')
     conn.execute('CREATE TABLE popcon (package TEXT PRIMARY KEY, rank INTEGER NOT NULL)')
-    conn.execute('CREATE TABLE units (package TEXT NOT NULL REFERENCES popcon, unit_path TEXT NOT NULL)')
+    conn.execute('CREATE TABLE units (package TEXT NOT NULL REFERENCES popcon, unit_path TEXT NOT NULL, lockdown_complete INTEGER NOT NULL DEFAULT 0)')
 
     with gzip.open('by_inst.gz', 'rt') as f:
         conn.executemany(
@@ -63,39 +63,21 @@ with sqlite3.connect(':memory:') as conn:
 
     with open('apt-file.stdout') as f:
         conn.executemany(
-            'INSERT INTO units VALUES (?, ?)',
+            'INSERT INTO units (package, unit_path) VALUES (?, ?)',
             (((package, unit_path)
               for line in f
               for package, _, unit_path in [line.strip().partition(': ')])))
 
-    ## This does one query per source package, which is WAY too slow.
-    # conn.executemany(
-    #     'INSERT INTO CVEs (package, rank) VALUES (?, ?)',
-    #     ((binary_package, resp.text.count('CVE'))
-    #      for binary_package, in conn.execute(
-    #              # 'SELECT DISTINCT package FROM units'
-    #              'SELECT DISTINCT package FROM units NATURAL LEFT JOIN popcon ORDER BY rank, package'
-    #              ' LIMIT 10'  # DEBUGGING
-    #      )
-    #      for resp in [requests.get(
-    #              'https://security-tracker.debian.org/tracker/source-package/'
-    #              '{binary_package_to_source_package(binary_package)}')]
-    #      if resp.ok))
-    # for binary_package, in conn.execute(
-    #         # 'SELECT DISTINCT package FROM units'
-    #         'SELECT DISTINCT package FROM units NATURAL JOIN popcon ORDER BY rank'
-    #         ' LIMIT 10'  # DEBUGGING
-    # ):
-    #     print(f'binary_package {binary_package}')
-    #     url = (
-    #         'https://security-tracker.debian.org/tracker/source-package/'
-    #         f'{binary_package_to_source_package(binary_package)}')
-    #     print(f'url {url}')
-    #     resp = requests.get(url)
-    #     if resp.ok:
-    #         count = resp.text.count('CVE')
-    #         print(f'count {count}')
-    #         conn.execute('INSERT INTO CVEs VALUES (?, ?)', (binary_package, count))
+    for path in (glob.glob('systemd_241_lockdown/etc/systemd/system/*.d/20-default-deny.conf') +
+                 glob.glob('systemd_241_lockdown/etc/systemd/system/*.d/20-SKIPPED.conf')):
+        unit_name = path.split('/')[4][:-2]
+        unit_path = f'/lib/systemd/system/{unit_name}'
+        init_path = f'/etc/init.d/{unit_name.replace(".service", "")}'
+        conn.execute('UPDATE units SET lockdown_complete = 1 WHERE unit_path = ? OR unit_path = ? OR unit_path = ?',
+                     (unit_path,
+                      init_path,
+                      # /etc/init.d/hwclock.sh &c
+                      f'{init_path}.sh'))
 
     # Instead, download the json database and process that...
     subprocess.check_call('wget -nv -nc https://security-tracker.debian.org/tracker/data/json'.split())
@@ -112,6 +94,7 @@ with sqlite3.connect(':memory:') as conn:
     #     'INSERT INTO packages (package, source_package) VALUES (?, ?)',
     #     ((package, binary_package_to_source_package(package))
     #       for package, in conn.execute('SELECT DISTINCT package FROM units')))
+    source_package = None       # SIGH
     for path in glob.glob('/var/lib/apt/lists/*_Packages'):
         with open(path) as f:
             # UPDATE: I give up, I can't work out how to do this in debian.deb822 or apt.Cache.
@@ -128,21 +111,11 @@ with sqlite3.connect(':memory:') as conn:
                     package = source_package = None
 
     with open('debian-systemd-service-units-by-popcon-popularity.tsv', 'w') as f:
-        for row in conn.execute('SELECT rank, package, unit_path FROM units NATURAL LEFT JOIN popcon ORDER BY rank IS NULL, 1, 2, 3'):
-            unit_name = os.path.basename(row[-1])
-            if (os.path.exists(f'systemd_241_lockdown/etc/systemd/system/{unit_name}.d/20-default-deny.conf') or
-                os.path.exists(f'systemd_241_lockdown/etc/systemd/system/{unit_name}.d/20-SKIPPED.conf')):
-                # Mark it as "done" by commenting it out.
-                row = list(row)
-                row[0] = '#' + str(row[0])
+        for row in conn.execute('SELECT CASE lockdown_complete WHEN 1 THEN "#" ELSE "" END as commented_out,'
+                                '       rank, package, unit_path FROM units NATURAL LEFT JOIN popcon ORDER BY rank IS NULL, 2, 3, 4'):
             print(*row, sep='\t', file=f)
 
     with open('debian-systemd-service-units-by-cve-count.tsv', 'w') as f:
-        for row in conn.execute('SELECT rank, package, unit_path FROM units NATURAL JOIN packages NATURAL LEFT JOIN CVEs ORDER BY 1 DESC, 2, 3'):
-            unit_name = os.path.basename(row[-1])
-            if (os.path.exists(f'systemd_241_lockdown/etc/systemd/system/{unit_name}.d/20-default-deny.conf') or
-                os.path.exists(f'systemd_241_lockdown/etc/systemd/system/{unit_name}.d/20-SKIPPED.conf')):
-                # Mark it as "done" by commenting it out.
-                row = list(row)
-                row[0] = '#' + str(row[0])
+        for row in conn.execute('SELECT CASE lockdown_complete WHEN 1 THEN "#" ELSE "" END as commented_out,'
+                                ' rank, package, unit_path FROM units NATURAL JOIN packages NATURAL LEFT JOIN CVEs ORDER BY 2 DESC, 3, 4'):
             print(*row, sep='\t', file=f)
