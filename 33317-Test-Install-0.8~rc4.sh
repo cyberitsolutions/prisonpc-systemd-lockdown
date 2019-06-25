@@ -325,7 +325,7 @@ Name=enp11s0
 DHCP=yes
 DNSSEC=no
 [DHCP]
-UseDomain=yes
+UseDomains=yes
 EOF
 
 
