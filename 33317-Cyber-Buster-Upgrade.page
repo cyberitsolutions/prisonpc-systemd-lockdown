@@ -3424,3 +3424,178 @@ IRC Logs
     17:14 <jjohansen> if a file is in the override dir, it will be used instead of the file underneath
     17:14 <jjohansen> sadly that isn't available to you yet
     17:15 <jjohansen> 2.13 only supports it for caches
+
+[BIG GAP WHERE I GOT SICK OF COPY-PASTE-PRUNING ALL MY IRC LOGS ]
+
+2019-06-25 #dovecot::
+
+    15:59 <twb> cmouse: hey you know how you removed NoNewPrivileges because sendmail_program (may) need setgid?  [https://github.com/dovecot/core/commit/a66e59551]
+    16:00 <cmouse> twb: yes?
+    16:00 <twb> I have a horrific workaround
+    16:00 <twb> BindReadOnlyPaths=/usr/bin/msmtp:/usr/sbin/sendmail
+    16:00 <cmouse> that ... can't possibly work
+    16:01 <twb> msmtp doesn't need setgid, so you just tell it to send to localhost:25, which is postfix
+    16:01 <cmouse> ah.
+    16:01 <twb> I'm testing it now
+    16:01 <cmouse> you are right, it's horrific.
+    16:01 <xrandr> cmouse: how much of the configuration would need to be changed?
+    16:01 <cmouse> xrandr: impossible to say without knowing
+    16:01 <cmouse> https://wiki.dovecot.org/Upgrading this might help
+    16:02 <twb> (It does mean you need to allow AF_INET/6 and IPAddressAllow=localhost, but dovecot at least already needs that much)
+    16:03 <cmouse> twb: why not just sent sendmail_path=/usr/bin/msmtp?
+    16:03 <xrandr> cmouse: thanks, I'll look into it. For now, it is workign
+    16:04 <twb> cmouse: only because that's dovecot-specific and I want to reuse this for e.g. smartd
+    16:04 <twb> (and smartd just calls /bin/mail, which calls /usr/sbin/sendmail)
+    16:04 <cmouse> twb: btw, i have better idea for you.
+    16:04 <twb> Oh, also, because systemd will error out if /bin/msmtp isn't installed
+    16:05 <cmouse> try setting 'submission_host=localhost:25' in your config
+    16:05 <twb> cmouse: you mean in the postfix main.cf?
+    16:05 <cmouse> no, i mean in dovecot config
+    16:05 <twb> ah Ok
+    16:05 <cmouse> and set sendmail_path=
+    16:05 <cmouse> assuming you have 2.3.6 or so
+    16:06 <cmouse> ah, no, that has been there for 2.0.10
+    16:06 <cmouse> so "should work"
+    16:06 <cmouse> q
+    16:29 <twb> cmouse: this is working, yay!  http://ix.io/1MJb/ini
+    16:29 <cmouse> can you also try the submission_host alternative?
+    16:29 <twb> So I can basically use that last paragraph as a "drop in" for all the units I want to have sendmail access
+    16:30 <twb> cmouse: sure.  How do I trigger dovecot to try to send an email?
+    16:30 <cmouse> twb: vacation?
+    16:30 <twb> Right now I don't even have dovecot set up as the LDA; it's basically a fresh debian 10 install
+    16:31 <cmouse> twb: sieve vacation is one way to trigger such thing
+    16:33 <twb> is there a CLI / TUI sieve client?
+    16:33 <cmouse> doveadm sieve
+    16:33 <twb> I guess I can just write a sieve file and drop it in by hand
+    16:33 [twb RTFM's doveadm sieve]
+    16:33 <cmouse> it's slightly safer way to drop it in by hand
+    16:36 <twb> Hahaha.  "doveadm sieve list -A" complains about systemd-coredump account (uid=999)
+    16:37 <cmouse> twb: yes.
+    16:37 <cmouse> twb: there is also min_valid_uid setting
+    16:40 <twb> Hrm, I'm very surprised that's not set to 1000 on Debian by default
+    16:48 <twb> doveadm also "saw" the user created on-the-fly to execute ntpwait.  Even though ntpwait ends, RemainAfterExit was on, so systemd kept the "temporary" account in nss, where doveadm could see it via getpwent
+    16:49 <twb> That took me a little white to debug
+    17:11 <twb> OK, I've been stuck for a bit.
+    17:11 <twb> root@not-omega:~# doveadm sieve put -u test1 -a vacation-test.sieve < vacation-test.sieve
+    17:11 <twb> doveadm(test1): Error: Mailbox INBOX: file_dotlock_create(test1) in directory /var/mail failed: Permission denied (euid=1001(test1) egid=8(mail) missing +w perm: /var/mail, dir owned by 0:0 mode=0755)
+    17:11 <twb> That's even with systemd lockdown turned off and dovecot restarted
+    17:12 <twb> What dumb thing have I missed?  Maybe that sieve isn't allowed for plain mbox, only maildir/dbox?
+    17:13 <twb> Hrm, /home/test1/sieve/vacation-test.sieve.sieve  exists
+    17:16 <cmouse> twb: did you enable?
+    17:16 <twb> enable what?
+    17:16 <cmouse> the sieve script
+    17:16 <twb> Isn't that what the -a (tries to) do?
+    17:16 <cmouse> well, check with 'doveadm sieve list -u test1'
+    17:16 <cmouse> it should tell you if it's active or not
+    17:17 <cmouse> also, you need to have 'sieve' plugin loaded for lda/lmtp
+    17:17 <twb> vacation-test.sieve ACTIVE
+    17:17 <cmouse> twb: also, /var/mail is 0:0
+    17:17 <cmouse> twb: dovecot can't create test1 in there then
+    17:17 <cmouse> twb: you either need to create and chown yourself, change /var/mail privs, and optionally use mail_privileged_group
+    17:18 <twb> There is already a /var/mail/test1 mbox -- http://ix.io/1MJk
+    17:18 <cmouse> did you use ProtectSystem=strict?
+    17:18 <twb> That's off, and in any case the error is coming from doveadm, which is running unconfined
+    17:19 <cmouse> can you show 'doveadm user test1'?
+    17:19 <twb> Maybe "dotlocks" need elevated privileges
+    17:19 <cmouse> no,.
+    17:19 <cmouse> and 'doveconf -n' too
+    17:19 <twb> I notice that both mailutils and mutt have setgid binaries for their dotlocks
+    17:19 <cmouse> sure.
+    17:19 <cmouse> but it's not needed.
+    17:20 <cmouse> dotlock = create a .file
+    17:20 <twb> http://ix.io/1MJl  doveadm user test1
+    17:20 <cmouse> ah.
+    17:20 <twb> doveconf -n http://ix.io/1MJm
+    17:21 <cmouse> do you also have /home/test1 ?
+    17:21 <twb> Yep
+    17:21 <cmouse> k
+    17:21 <twb> http://ix.io/1MJp
+    17:21 <cmouse> btw, you probably want to use %Lu instead of %u
+    17:21 <cmouse> aaaaaa... heh =)
+    17:21 <twb> That's just whatever Debian gave me; I haven't messed with the dovecot config at all yet.
+    17:22 <cmouse> try setting mail_location = mbox:~/mail:INBOX=/var/mail/%u:INDEX=~/mail/.index/
+    17:22 <cmouse> or something like that
+    17:22 <twb> Will it be simpler to just switch to maildir or dbox?  Because that's part of the end goal anyway
+    17:22 <cmouse> also, for the record, i don't think you should use mbox at all
+    17:22 <cmouse> i'd use maildir at least.
+    17:25 <twb> Is "mail_location = mdbox:/var/mail/%Lu" good enough, or do I need to set an INDEX separately
+    17:26 <cmouse> uhm.. why do you think that would work?
+    17:26 <cmouse> you probably don't want to use /var/mail for mdbox.
+    17:26 <twb> OK.  I definitely want mail and $HOME to be on separate filesystems, at least.
+    17:27 <cmouse> k
+    17:27 <cmouse> you can use /var/mail
+    17:27 <cmouse> but mdbox is going to be a *directory* not a *file*
+    17:27 <twb> understood
+    17:28 <twb> It's a test server; I'm just moving the old mboxes away and not caring
+    17:28 <cmouse> ok
+    17:30 <twb> Yeah OK so mail_location alone still needs $HOME access for some stuff; I guess to "protect" dovecot internals from direct user meddling I want to set mail_home as well, like you suggested yesterday
+    17:30 <twb> (My other concern there would be EDQUOT, because I have strict quotas on $HOME, but not on mail)
+    17:45 <cmouse> btw, you should probably read up on how mdbox works
+    17:45 <cmouse> because it needs regular maintenance to work properly.
+    17:45 <twb> oh well in that case I'll just continue using maildir and not giving a shit :-)
+    17:47 <twb> With "mail_location = maildir:/var/mail/%Lu", doveadm no longer gives me any errors.
+    17:47 <cmouse> uh, maildir expects a directory as wel.
+    17:47 <cmouse> as well
+    17:48 <twb> Yeah I know.
+    17:48 <cmouse> you could've tried making /var/mail/.imap folder, chmod 1777
+    17:48 <cmouse> just came to mind
+    17:49 <twb> Hum, OK
+    17:49 <twb> Anyway, after all that, I now have a vacation sieve script installed and active.  Now, how do I get it to fire the sieve script?
+    17:49 <cmouse> just deliver mail to user.
+    17:50 <cmouse> you can directly execute dovecot-lda
+    17:50 <twb> Ah but remember 16:30 <twb> Right now I don't even have dovecot set up as the LDA; it's basically a fresh debian 10 install
+    17:50 <twb> Oh OK
+    17:50 <cmouse> dovecot-lda -f some@fake.address -d test1 -a test1@fake.address
+    17:50 <cmouse> then just write some crap and press ctrl+d
+    17:50 <cmouse> on it's own line.
+    17:59 <twb> OK, dovecot-lda is delivering the message, but not a vacation message back (I think), probably because my sieve script is broken  http://ix.io/1MJx  http://ix.io/1MJw
+    17:59 <twb> I'll try running sievec on it
+    17:59 <twb> no errors or output from sievec
+    18:00 <twb> I can see /home/test1/.dovecot.sieve but I can't see a compiled version, like I remember from last time I did sieve stuff
+    18:03 <cmouse> twb: it's compiled lazily.
+    18:03 <twb> Righto
+
+2019-06-25 #postfix::
+
+    15:27 <twb> OK, I have a stupid idea, and I want you to listen to the backstory and then tell me HOW stupid it is.
+    15:28 <twb> 1. systemd has a bunch of "drop privileges" features for daemons. e.g. seccomp bpf to make anything that tries to call mount(2) do a core dump instead
+    15:29 <twb> 2. a bunch of those implicitly break setgid binaries.  Which is rarely an issue, EXCEPT THAT postdrop is sgid postfix, and lots of things want to use /usr/sbin/sendmail (which uses postdrop).
+    15:31 <twb> 3. so screw it, just make /usr/sbin/sendmail be msmtp instead, using localhost as the smarthost, and postfix set to be allow relay for localhost clients.
+    15:32 <twb> That way I only need to allow loopback network access, not all the things that would otherwise break postdrop sgid.
+    15:32 <twb> The immediate example I have right now is dovecot --- https://github.com/dovecot/core/commit/a66e595515ab579a875a2e9b8116be5da45fb5d6#diff-5bbec0a0006d92d441b5c8fa72690f95
+    15:33 <twb> But my other test case is smartd (which sends an email when your disk is dying).
+    15:33 <twb> So, how crazy is this plan?
+    16:31 <twb> I tested it and it's working, yay! http://ix.io/1MJb/ini
+
+    18:15 <pj> twb: there are a number of good reasons to replace the sendmail binary with msmtp, but I have never had problems with systemd and the postfix sendmail binary, it has always just worked for me.  I would say something is wrong with your install if it doesn't.
+    18:16 <twb> pj: I've told systemd to block setgid
+    18:17 <pj> oh, in that case the ramifications are on you.
+    18:17 <twb> Yeah understood :-)
+    18:18 <twb> It's in the same general bucket as "I blocked bad things with SELinux/Apparmor, and now a good thing is also blocked"
+    18:18 <pj> there is nothing wrong with wanting a more secure system, but do realize the most secure system is one that can't do anything at all.  I would see if you can put an exception in for postdrop.
+    18:18 <blackflow> twb: in my book, if I block something with selinux/apparmor that I think should be blocked and a piece of software breaks, I'd drop that software if possible. No excuse for bad practices.
+    18:18 <pj> ...or just use msmtp like you're doing, there are other advantages to that, actually.
+    18:18 <twb> pj: I can punch a hole for postdrop sgid, but it's a much bigger hole
+    18:19 <pj> you get all the smtp_* features with msmtp, which you don't get with pickup.
+    18:20 <pj> blackflow: it's really not a bad practice just because postfix uses a feature of the filesystem that someone arbitrarily decides to block for their own security reasons.  It's not even a security feature that is enabled by default in any distro that I know of.
+    18:22 <twb> Actually for daemons that run as root, the whitelist difference isn't too big --- http://ix.io/1MJz/ini (postdrop)  versus  http://ix.io/1MJA/ini (msmtp)
+    18:23 <twb> it's bigger for daemons that have all their privileges taken away before systemd even starts them
+    18:24 <twb> BTW if you're curious, this command will print all the things that are suid/sgid/sticky: find -O3 / -xdev -type f -executable -perm /6000 -ls
+    18:24 <blackflow> running daemons as non-root (with some cap_net_bind_service magick) is what I'd prefer where possible too. I haven't yet sat down to talk with postfix about that tho :)
+    18:24 <twb> Mostly they're su/sudo/pkexec and chfn/chpw things
+    18:25 <twb> blackflow: mariadb does that by default now, to my great surprise
+    18:26 <blackflow> you mean the maintainer of mariadb for your distro configured the service unit to do so? important distinction. something I'd like to see done more in Debian but it won't be as they still wanna support sysv
+    18:26 <twb> blackflow: no, I mean upstream
+    18:26 <twb> https://mariadb.com/kb/en/library/systemd/
+    18:26 <blackflow> twb: in the daemon itself?
+    18:26 <blackflow> oh you mean upstream packaged service unit?
+    18:27 <twb> blackflow: yes
+    18:27 <blackflow> yes, but distros will change that.
+    18:29 <twb> blackflow: if you're curious, http://cyber.com.au/~twb/tmp/systemd_241_lockdown.txz  (work in progress)
+    18:30 <blackflow> what's that?
+    18:30 <twb> That's the "block all the things!" rules I'm dropping on top of various services
+    18:31 <twb> (See also "systemd-analyze security")
+    18:32 <blackflow> ah, run unpriv, with caps where needed, readonly fs view, strict, rw where minimally needed, private tmp, no access to dev, seccomp lockdown, ... ?
+    18:33 <twb> blackflow: yep all that stuff
+    18:34 <blackflow> that's what I'm doing where possible, but haven't yet gotten to setup postfix like that.
+    18:34 <twb> blackflow: I'd be curious to see your results; I can be found on #emacs most weekdays
