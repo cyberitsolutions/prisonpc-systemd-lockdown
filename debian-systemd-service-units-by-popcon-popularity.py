@@ -79,13 +79,18 @@ with sqlite3.connect(':memory:') as conn:
                       # /etc/init.d/console-setup.sh &c
                       f'{init_path}.sh'))
 
+    del unit_name, unit_path, init_path
+
     # Permanently masked things (e.g. hwclock.sh).
     for path in glob.glob('/lib/systemd/system/*.service'):
+        unit_name = os.path.basename(path).replace('.service', '')
+        init_path_1 = f'/etc/init.d/{unit_name.replace(".service", "")}'
+        init_path_2 = f'/etc/init.d/{unit_name.replace(".service", "")}.sh'
         if os.path.islink(path) and os.path.realpath(path) == '/dev/null':
             conn.execute('UPDATE units SET lockdown_complete = 1 WHERE unit_path = ? OR unit_path = ? OR unit_path = ?',
-                         (unit_path,
-                          init_path,
-                          f'{init_path}.sh'))
+                         (path,
+                          init_path_1,
+                          init_path_2))
 
     # Instead, download the json database and process that...
     subprocess.check_call('wget -nv -nc https://security-tracker.debian.org/tracker/data/json'.split())
