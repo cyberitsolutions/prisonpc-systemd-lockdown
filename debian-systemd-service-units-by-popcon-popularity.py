@@ -91,6 +91,12 @@ with sqlite3.connect(':memory:') as conn:
                          (path,
                           init_path_1,
                           init_path_2))
+        if os.path.islink(path) and os.path.realpath(path).endswith('.service'):
+            conn.execute('UPDATE units SET lockdown_complete = (SELECT lockdown_complete FROM units WHERE unit_path = ?) WHERE unit_path = ? OR unit_path = ? OR unit_path = ?',
+                         (os.path.realpath(path),  # the canonical name, e.g. /l/s/s/systemd-udevd.service
+                          path,                    # the alias, e.g. /l/s/s/udev.service
+                          init_path_1,             # /etc/init.d/udev
+                          init_path_2))            # /etc/init.d/udev.sh
 
     # Instead, download the json database and process that...
     subprocess.check_call('wget -nv -nc https://security-tracker.debian.org/tracker/data/json'.split())
