@@ -68,8 +68,7 @@ with sqlite3.connect(':memory:') as conn:
               for line in f
               for package, _, unit_path in [line.strip().partition(': ')])))
 
-    for path in (glob.glob('systemd_241_lockdown/etc/systemd/system/*.d/20-default-deny.conf') +
-                 glob.glob('systemd_241_lockdown/etc/systemd/system/*.d/20-SKIPPED.conf')):
+    for path in (glob.glob('systemd_241_lockdown/etc/systemd/system/*.d/20-default-deny.conf')):
         unit_name = path.split('/')[4][:-2]
         unit_path = f'/lib/systemd/system/{unit_name}'
         init_path = f'/etc/init.d/{unit_name.replace(".service", "")}'
@@ -78,6 +77,17 @@ with sqlite3.connect(':memory:') as conn:
                       init_path,
                       # /etc/init.d/console-setup.sh &c
                       f'{init_path}.sh'))
+
+    for path in (glob.glob('systemd_241_lockdown/etc/systemd/system/*.d/20-SKIPPED.conf')):
+        unit_name = path.split('/')[4][:-2]
+        unit_path = f'/lib/systemd/system/{unit_name}'
+        init_path = f'/etc/init.d/{unit_name.replace(".service", "")}'
+        conn.execute('UPDATE units SET lockdown_complete = -1 WHERE unit_path = ? OR unit_path = ? OR unit_path = ?',
+                     (unit_path,
+                      init_path,
+                      # /etc/init.d/console-setup.sh &c
+                      f'{init_path}.sh'))
+
 
     del unit_name, unit_path, init_path
 
@@ -139,13 +149,13 @@ with sqlite3.connect(':memory:') as conn:
                     package = source_package = None
 
     with open('debian-systemd-service-units-by-popcon-popularity.tsv', 'w') as f:
-        for row in conn.execute('SELECT CASE lockdown_complete WHEN 1 THEN "#" ELSE "" END ||'
+        for row in conn.execute('SELECT CASE lockdown_complete WHEN 1 THEN "#" WHEN -1 THEN "%" ELSE "" END ||'
                                 '       CASE low_level         WHEN 1 THEN "!" ELSE "" END as commented_out_and_low_level,'
                                 '       rank, package, unit_path FROM units NATURAL LEFT JOIN popcon ORDER BY rank IS NULL, 2, 3, 4'):
             print(*row, sep='\t', file=f)
 
     with open('debian-systemd-service-units-by-cve-count.tsv', 'w') as f:
-        for row in conn.execute('SELECT CASE lockdown_complete WHEN 1 THEN "#" ELSE "" END ||'
+        for row in conn.execute('SELECT CASE lockdown_complete WHEN 1 THEN "#" WHEN -1 THEN "%" ELSE "" END ||'
                                 '       CASE low_level         WHEN 1 THEN "!" ELSE "" END as commented_out_and_low_level,'
                                 ' rank, package, unit_path FROM units NATURAL JOIN packages NATURAL LEFT JOIN CVEs ORDER BY 2 DESC, 3, 4'):
             print(*row, sep='\t', file=f)
