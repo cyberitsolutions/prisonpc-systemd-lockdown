@@ -3599,3 +3599,17 @@ IRC Logs
     18:33 <twb> blackflow: yep all that stuff
     18:34 <blackflow> that's what I'm doing where possible, but haven't yet gotten to setup postfix like that.
     18:34 <twb> blackflow: I'd be curious to see your results; I can be found on #emacs most weekdays
+
+2019-07-10 #systemd::
+
+    15:46 <twb> does the dbus unit actually "do things", or does it just send and receive IPC calls?
+    15:46 <twb> I assume whenever dbus wants to e.g. start up polkitd to ask it a question, that's actually implemented by sending an IPC to systemd saying "btw please start polkit" --- dbus itself doesn't actually need and privileges at all
+    15:47 <grawity> dbus-daemon traditionally execs daemons on its own (through a setuid helper)
+    15:47 <twb> I thought it stopped doing that when systemd landed
+    15:48 <grawity> nowadays 99% of system bus services are systemd-activatable, as in their D-Bus .service files refer to a SystemdService= (and some don't even have a valid Exec= anymore)
+    15:48 <twb> I remember seeing messages along the lines of "activated (via systemd)"
+    15:48 <twb> grawity: ah so it's basically opt-in on a per dbus listener basis, and in practice most of them do, but in theory one might not?
+    15:48 <grawity> yes
+    15:48 <twb> ohhh
+    15:48 <twb> I thought it was automatically done via a generator that read all the dbus listener xml files
+    15:50 <grawity> (of course, all of that only applies when a client tries to contact a service that isn't running yet – if it's already running and claimed the bus name, then there's no further "activation" needed)
