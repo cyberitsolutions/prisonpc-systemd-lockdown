@@ -51,7 +51,7 @@ with sqlite3.connect(':memory:') as conn:
     #conn.execute('PRAGMA foreign_keys = 1')
     conn.execute('CREATE TABLE CVEs (source_package TEXT PRIMARY KEY, rank INTEGER NOT NULL)')
     conn.execute('CREATE TABLE popcon (package TEXT PRIMARY KEY, rank INTEGER NOT NULL)')
-    conn.execute('CREATE TABLE units (package TEXT NOT NULL REFERENCES popcon, unit_path TEXT NOT NULL, lockdown_complete INTEGER NOT NULL DEFAULT 0)')
+    conn.execute('CREATE TABLE units (package TEXT NOT NULL REFERENCES popcon, unit_path TEXT NOT NULL, lockdown_complete INTEGER NOT NULL DEFAULT 0, low_level INTEGER NOT NULL DEFAULT 0)')
 
     with gzip.open('by_inst.gz', 'rt') as f:
         conn.executemany(
@@ -81,6 +81,14 @@ with sqlite3.connect(':memory:') as conn:
 
     del unit_name, unit_path, init_path
 
+
+    # Mark low-level units as such, because they 1. require extra care; and 2. can't use PrivateTemp=yes without breaking things.
+    # Only doing ones on my netbook for now, because that should cover the majority (those provided by systemd itself).
+    for path in glob.glob('/lib/systemd/system/*.service'):
+        with open(path) as f:
+            if any(line.strip() == 'DefaultDependencies=no' for line in f):
+                conn.execute('UPDATE units SET low_level = ? WHERE unit_path = ?', (True, path))
+
     # Permanently masked things (e.g. hwclock.sh).
     for path in glob.glob('/lib/systemd/system/*.service'):
         unit_name = os.path.basename(path).replace('.service', '')
@@ -97,6 +105,7 @@ with sqlite3.connect(':memory:') as conn:
                           path,                    # the alias, e.g. /l/s/s/udev.service
                           init_path_1,             # /etc/init.d/udev
                           init_path_2))            # /etc/init.d/udev.sh
+
 
     # Instead, download the json database and process that...
     subprocess.check_call('wget -nv -nc https://security-tracker.debian.org/tracker/data/json'.split())
@@ -130,11 +139,13 @@ with sqlite3.connect(':memory:') as conn:
                     package = source_package = None
 
     with open('debian-systemd-service-units-by-popcon-popularity.tsv', 'w') as f:
-        for row in conn.execute('SELECT CASE lockdown_complete WHEN 1 THEN "#" ELSE "" END as commented_out,'
+        for row in conn.execute('SELECT CASE lockdown_complete WHEN 1 THEN "#" ELSE "" END ||'
+                                '       CASE low_level         WHEN 1 THEN "!" ELSE "" END as commented_out_and_low_level,'
                                 '       rank, package, unit_path FROM units NATURAL LEFT JOIN popcon ORDER BY rank IS NULL, 2, 3, 4'):
             print(*row, sep='\t', file=f)
 
     with open('debian-systemd-service-units-by-cve-count.tsv', 'w') as f:
-        for row in conn.execute('SELECT CASE lockdown_complete WHEN 1 THEN "#" ELSE "" END as commented_out,'
+        for row in conn.execute('SELECT CASE lockdown_complete WHEN 1 THEN "#" ELSE "" END ||'
+                                '       CASE low_level         WHEN 1 THEN "!" ELSE "" END as commented_out_and_low_level,'
                                 ' rank, package, unit_path FROM units NATURAL JOIN packages NATURAL LEFT JOIN CVEs ORDER BY 2 DESC, 3, 4'):
             print(*row, sep='\t', file=f)
