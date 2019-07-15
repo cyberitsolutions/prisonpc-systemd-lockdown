@@ -1,0 +1,5 @@
+prisonpc-systemd-lockdown (0.1) buster; urgency=medium
+
+  * Initial Debianization
+
+ -- Trent W. Buck <trentbuck@gmail.com>  Mon, 15 Jul 2019 20:01:54 +1000

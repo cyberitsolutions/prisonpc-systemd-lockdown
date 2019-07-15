@@ -1,0 +1,15 @@
+#!/usr/bin/make -f
+
+%:
+	dh $@
+
+# Systemd in Stretch doesn't support some options well/at all.
+# Therefore just remove them from all the files at package compile time.
+# Specific notes:
+#   * SystemCallFilter= is supported, but @system-service isn't.
+#     This makes it too annoying to use.
+#   * PrivateMounts= LockPersonality= IPAddressDeny= are all ignored after a warning.
+#     Removing them here significantly reduces logspam on "systemctl daemon-reload".
+override_dh_install:
+	dh_install
+	find debian/prisonpc-systemd-lockdown-stretch -type f -exec sed -rsi '/^(SystemCallFilter|)=/d' {} +
