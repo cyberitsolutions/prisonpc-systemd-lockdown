@@ -15,3 +15,4 @@
 override_dh_install:
 	dh_install
 	find debian/prisonpc-systemd-lockdown-stretch -type f -exec sed -rsi '/^(SystemCallFilter|PrivateMounts|LockPersonality|IPAddressDeny|DefaultIPAccounting|RootImage|RootDirectory)=/d' {} +
+	find debian/prisonpc-systemd-lockdown-buster -name '*stretch-only*' -delete
