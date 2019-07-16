@@ -1,0 +1,10 @@
+# -*- conf -*-
+# [[<package>][ <archlist>][ <type>]:]<lintian-tag>[ [*]<lintian-info>[*]]
+
+# We mention /var/lib/dpkg because we allow apt/dpkg to write to it.
+# We don't actually touch it ourselves, so this is a false positive.
+uses-dpkg-database-directly etc/systemd/system/apt-daily.service.d/40-opt-in-allow.conf
+
+# We also have to blacklist this file itself, because
+# these comments mention /var/lib/dpkg!
+uses-dpkg-database-directly usr/share/lintian/overrides/*
