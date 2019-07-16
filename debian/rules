@@ -10,6 +10,8 @@
 #     This makes it too annoying to use.
 #   * PrivateMounts= LockPersonality= IPAddressDeny= are all ignored after a warning.
 #     Removing them here significantly reduces logspam on "systemctl daemon-reload".
+#   * DefaultIPAccounting= (in system.conf.d) likewise.
+#   * RootImage= RootDirectory= (in 50-special-boot-phase) likewise.
 override_dh_install:
 	dh_install
-	find debian/prisonpc-systemd-lockdown-stretch -type f -exec sed -rsi '/^(SystemCallFilter|PrivateMounts|LockPersonality|IPAddressDeny)=/d' {} +
+	find debian/prisonpc-systemd-lockdown-stretch -type f -exec sed -rsi '/^(SystemCallFilter|PrivateMounts|LockPersonality|IPAddressDeny|DefaultIPAccounting|RootImage|RootDirectory)=/d' {} +
