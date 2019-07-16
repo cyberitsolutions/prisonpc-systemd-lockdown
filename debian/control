@@ -12,10 +12,16 @@ Architecture: all
 Provides: prisonpc-systemd-lockdown
 Conflicts: prisonpc-systemd-lockdown
 Enhances: systemd
+Recommends: postfix, msmtp
 Depends: ${misc:Depends},
-# FIXME: this version is just an estimate!
- systemd-sysv (>= 241)
-Description: FIXME
+# NOTE: v239 introduced PrivateMounts=yes
+ systemd-sysv (>= 239~)
+Description: systemd-based confinement for daemons
+ This package is the systemd equivalent of apparmor-profiles.
+ It adds systemd-based confinement to other daemons.
+ (You can and should *both* this and apparmor-profiles!)
+ .
+ For example, it says nginx can't read from /home and can't write to /etc.
 
 Package: prisonpc-systemd-lockdown-stretch
 Architecture: all
@@ -23,4 +29,13 @@ Provides: prisonpc-systemd-lockdown
 Conflicts: prisonpc-systemd-lockdown
 Depends: ${misc:Depends},
  systemd-sysv
-Description: FIXME
+Description: systemd-based confinement for daemons (stretch backport)
+ This package is the systemd equivalent of apparmor-profiles.
+ It adds systemd-based confinement to other daemons.
+ (You can and should *both* this and apparmor-profiles!)
+ .
+ For example, it says nginx can't read from /home and can't write to /etc.
+ .
+ This package omits a few confinements that are not supported by systemd v231,
+ which is the default version on Debian 9 ("stretch").
+ Consider instead installing systemd-sysv/stretch-backports!
