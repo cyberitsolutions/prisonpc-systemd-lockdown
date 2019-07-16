@@ -12,4 +12,4 @@
 #     Removing them here significantly reduces logspam on "systemctl daemon-reload".
 override_dh_install:
 	dh_install
-	find debian/prisonpc-systemd-lockdown-stretch -type f -exec sed -rsi '/^(SystemCallFilter|)=/d' {} +
+	find debian/prisonpc-systemd-lockdown-stretch -type f -exec sed -rsi '/^(SystemCallFilter|PrivateMounts|LockPersonality|IPAddressDeny)=/d' {} +
