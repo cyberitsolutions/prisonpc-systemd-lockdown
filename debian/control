@@ -6,9 +6,11 @@ Uploaders: Trent W. Buck <trentbuck@gmail.com>
 Build-Depends: debhelper (>= 12)
 Standards-Version: 4.3.0
 Homepage: http://www.prisonpc.com/
+Rules-Requires-Root: no
 
 Package: prisonpc-systemd-lockdown-buster
 Architecture: all
+Multi-Arch: foreign
 Provides: prisonpc-systemd-lockdown
 Conflicts: prisonpc-systemd-lockdown
 Enhances: systemd
@@ -25,6 +27,7 @@ Description: systemd-based confinement for daemons
 
 Package: prisonpc-systemd-lockdown-stretch
 Architecture: all
+Multi-Arch: foreign
 Provides: prisonpc-systemd-lockdown
 Conflicts: prisonpc-systemd-lockdown
 Depends: ${misc:Depends},
