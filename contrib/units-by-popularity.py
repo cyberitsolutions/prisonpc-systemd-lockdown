@@ -53,7 +53,7 @@ with sqlite3.connect(':memory:') as conn:
     conn.execute('CREATE TABLE popcon (package TEXT PRIMARY KEY, rank INTEGER NOT NULL)')
     conn.execute('CREATE TABLE units (package TEXT NOT NULL REFERENCES popcon, unit_path TEXT NOT NULL, lockdown_complete INTEGER NOT NULL DEFAULT 0, low_level INTEGER NOT NULL DEFAULT 0)')
 
-    with gzip.open('by_inst.gz', 'rt') as f:
+    with gzip.open('by_inst.gz', 'rt', encoding='ISO-8859-1') as f:
         conn.executemany(
             'INSERT INTO popcon VALUES (?, ?)',
             ((words[1], words[0])
@@ -68,7 +68,7 @@ with sqlite3.connect(':memory:') as conn:
               for line in f
               for package, _, unit_path in [line.strip().partition(': ')])))
 
-    for path in (glob.glob('systemd_241_lockdown/etc/systemd/system/*.d/20-default-deny.conf')):
+    for path in (glob.glob('systemd/system/*.d/20-default-deny.conf')):
         unit_name = path.split('/')[4][:-2]
         unit_path = f'/lib/systemd/system/{unit_name}'
         init_path = f'/etc/init.d/{unit_name.replace(".service", "")}'
@@ -78,7 +78,9 @@ with sqlite3.connect(':memory:') as conn:
                       # /etc/init.d/console-setup.sh &c
                       f'{init_path}.sh'))
 
-    for path in (glob.glob('systemd_241_lockdown/etc/systemd/system/*.d/20-SKIPPED.conf')):
+        del unit_name, unit_path, init_path
+
+    for path in (glob.glob('systemd/system/*.d/20-SKIPPED.conf')):
         unit_name = path.split('/')[4][:-2]
         unit_path = f'/lib/systemd/system/{unit_name}'
         init_path = f'/etc/init.d/{unit_name.replace(".service", "")}'
@@ -88,8 +90,7 @@ with sqlite3.connect(':memory:') as conn:
                       # /etc/init.d/console-setup.sh &c
                       f'{init_path}.sh'))
 
-
-    del unit_name, unit_path, init_path
+        del unit_name, unit_path, init_path
 
 
     # Mark low-level units as such, because they 1. require extra care; and 2. can't use PrivateTemp=yes without breaking things.
@@ -100,21 +101,21 @@ with sqlite3.connect(':memory:') as conn:
                 conn.execute('UPDATE units SET low_level = ? WHERE unit_path = ?', (True, path))
 
     # Permanently masked things (e.g. hwclock.sh).
-    for path in glob.glob('/lib/systemd/system/*.service'):
-        unit_name = os.path.basename(path).replace('.service', '')
-        init_path_1 = f'/etc/init.d/{unit_name.replace(".service", "")}'
-        init_path_2 = f'/etc/init.d/{unit_name.replace(".service", "")}.sh'
-        if os.path.islink(path) and os.path.realpath(path) == '/dev/null':
-            conn.execute('UPDATE units SET lockdown_complete = 1 WHERE unit_path = ? OR unit_path = ? OR unit_path = ?',
-                         (path,
-                          init_path_1,
-                          init_path_2))
-        if os.path.islink(path) and os.path.realpath(path).endswith('.service'):
-            conn.execute('UPDATE units SET lockdown_complete = (SELECT lockdown_complete FROM units WHERE unit_path = ?) WHERE unit_path = ? OR unit_path = ? OR unit_path = ?',
-                         (os.path.realpath(path),  # the canonical name, e.g. /l/s/s/systemd-udevd.service
-                          path,                    # the alias, e.g. /l/s/s/udev.service
-                          init_path_1,             # /etc/init.d/udev
-                          init_path_2))            # /etc/init.d/udev.sh
+    # for path in glob.glob('/lib/systemd/system/*.service'):
+    #     unit_name = os.path.basename(path).replace('.service', '')
+    #     init_path_1 = f'/etc/init.d/{unit_name.replace(".service", "")}'
+    #     init_path_2 = f'/etc/init.d/{unit_name.replace(".service", "")}.sh'
+    #     if os.path.islink(path) and os.path.realpath(path) == '/dev/null':
+    #         conn.execute('UPDATE units SET lockdown_complete = 1 WHERE unit_path = ? OR unit_path = ? OR unit_path = ?',
+    #                      (path,
+    #                       init_path_1,
+    #                       init_path_2))
+    #     if os.path.islink(path) and os.path.realpath(path).endswith('.service'):
+    #         conn.execute('UPDATE units SET lockdown_complete = (SELECT lockdown_complete FROM units WHERE unit_path = ?) WHERE unit_path = ? OR unit_path = ? OR unit_path = ?',
+    #                      (os.path.realpath(path),  # the canonical name, e.g. /l/s/s/systemd-udevd.service
+    #                       path,                    # the alias, e.g. /l/s/s/udev.service
+    #                       init_path_1,             # /etc/init.d/udev
+    #                       init_path_2))            # /etc/init.d/udev.sh
 
 
     # Instead, download the json database and process that...
