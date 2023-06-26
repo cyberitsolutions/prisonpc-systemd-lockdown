@@ -84,5 +84,5 @@ with sqlite3.connect(':memory:') as conn:
             'already_done'))
         writer.writeheader()
         writer.writerows(
-            conn.execute('SELECT * FROM data ORDER BY already_done > 0, popularity, script'))
+            conn.execute('SELECT * FROM data ORDER BY already_done >0, popularity IS NULL, popularity, source_package, binary_package, script'))
     print(n := n + 1, flush=True)  # PROGRESS DEBUGGING
