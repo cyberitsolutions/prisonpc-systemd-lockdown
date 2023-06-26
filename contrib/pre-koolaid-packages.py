@@ -50,7 +50,7 @@ with sqlite3.connect(':memory:') as conn:
                        text=True)))
     print(n := n + 1, flush=True)  # PROGRESS DEBUGGING
     conn.executemany(
-        'UPDATE data SET already_done = 1 WHERE binary_package = ? AND script = ?',
+        'UPDATE data SET already_done = 1 + (binary_package = ?) WHERE script = ?',
         re.findall(r'(.*): /lib/systemd/system/(.*)\.service\n',
                    subprocess.check_output(
                        'apt-file search /lib/systemd/system/'.split(),
@@ -84,5 +84,5 @@ with sqlite3.connect(':memory:') as conn:
             'already_done'))
         writer.writeheader()
         writer.writerows(
-            conn.execute('SELECT * FROM data ORDER BY already_done, popularity, script'))
+            conn.execute('SELECT * FROM data ORDER BY already_done > 0, popularity, script'))
     print(n := n + 1, flush=True)  # PROGRESS DEBUGGING
