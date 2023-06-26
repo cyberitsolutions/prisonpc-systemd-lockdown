@@ -6,6 +6,8 @@ import re
 import sqlite3
 import subprocess
 
+import apt
+
 __doc__ = """ list all packages that have an /etc/init.d/X but and corresponding /lib/systemd/system/X.service, ordered by descending popularity """
 
 
@@ -20,6 +22,19 @@ def binary_package_to_source_package(binary_package: str) -> str:
     else:
         # no match, so source_package = binary_package
         return binary_package
+
+
+# Faster method.
+# Allegedly this also works:
+#     <mooff> records = apt_pkg.SourceRecords(); records.lookup('busybox-syslogd'); print(records.package)
+cache = apt.Cache()
+def binary_package_to_source_package(binary_package: str) -> str:
+    source_package, = set(
+        source_value.split()[0]  # remove the trailing " (1.2.3)" that happens sometimes
+        for version in cache[binary_package].versions
+        for source_value in [version.record.get('Source', binary_package)]
+        if source_value)
+    return source_package
 
 
 n=0                             # PROGRESS DEBUGGING
