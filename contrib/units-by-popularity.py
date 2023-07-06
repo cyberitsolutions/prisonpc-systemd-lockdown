@@ -138,14 +138,14 @@ with sqlite3.connect(':memory:') as conn:
          for version in package.versions))
 
     with open('debian-systemd-service-units-by-popcon-popularity.tsv', 'w') as f:
-        print('State', 'Popcon Rank', 'Binary package', 'Unit path', sep='\t', file=f)
+        print('State', 'Popularity', 'Binary package', 'Unit path', sep='\t', file=f)
         for row in conn.execute('SELECT CASE lockdown_complete WHEN 1 THEN "#" WHEN -1 THEN "%" ELSE "" END ||'
                                 '       CASE low_level         WHEN 1 THEN "!" ELSE "" END as commented_out_and_low_level,'
                                 '       rank, package, unit_path FROM units NATURAL LEFT JOIN popcon ORDER BY rank IS NULL, 2, 3, 4'):
             print(*row, sep='\t', file=f)
 
     with open('debian-systemd-service-units-by-cve-count.tsv', 'w') as f:
-        print('State', 'Binary package', 'Unit path', sep='\t', file=f)
+        print('State', 'Vulnerabilities', 'Binary package', 'Unit path', sep='\t', file=f)
         for row in conn.execute('SELECT CASE lockdown_complete WHEN 1 THEN "#" WHEN -1 THEN "%" ELSE "" END ||'
                                 '       CASE low_level         WHEN 1 THEN "!" ELSE "" END as commented_out_and_low_level,'
                                 ' rank, package, unit_path FROM units NATURAL JOIN packages NATURAL LEFT JOIN CVEs ORDER BY 2 DESC, 3, 4'):
