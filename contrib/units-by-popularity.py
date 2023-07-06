@@ -14,10 +14,10 @@ import os
 import sqlite3
 import subprocess
 import json
-import glob
+import pathlib
 
 import debian.deb822
-import requests
+import apt
 
 def binary_package_to_source_package(s: str) -> str:
     return subprocess.check_output('grep-aptavail -s Source --no-field-name --exact-match -P'.split() + [s],
@@ -68,8 +68,8 @@ with sqlite3.connect(':memory:') as conn:
               for line in f
               for package, _, unit_path in [line.strip().partition(': ')])))
 
-    for path in (glob.glob('systemd/system/*.d/20-default-deny.conf')):
-        unit_name = path.split('/')[4][:-2]
+    for path in pathlib.Path('systemd/system/').glob('*.d/20-default-deny.conf'):
+        unit_name = path.parent.name[:-len('.d')]
         unit_path = f'/lib/systemd/system/{unit_name}'
         init_path = f'/etc/init.d/{unit_name.replace(".service", "")}'
         conn.execute('UPDATE units SET lockdown_complete = 1 WHERE unit_path = ? OR unit_path = ? OR unit_path = ?',
@@ -80,8 +80,8 @@ with sqlite3.connect(':memory:') as conn:
 
         del unit_name, unit_path, init_path
 
-    for path in (glob.glob('systemd/system/*.d/20-SKIPPED.conf')):
-        unit_name = path.split('/')[4][:-2]
+    for path in pathlib.Path('systemd/system/').glob('*.d/20-SKIPPED.conf'):
+        unit_name = path.parent.name[:-len('.d')]
         unit_path = f'/lib/systemd/system/{unit_name}'
         init_path = f'/etc/init.d/{unit_name.replace(".service", "")}'
         conn.execute('UPDATE units SET lockdown_complete = -1 WHERE unit_path = ? OR unit_path = ? OR unit_path = ?',
@@ -95,10 +95,11 @@ with sqlite3.connect(':memory:') as conn:
 
     # Mark low-level units as such, because they 1. require extra care; and 2. can't use PrivateTemp=yes without breaking things.
     # Only doing ones on my netbook for now, because that should cover the majority (those provided by systemd itself).
-    for path in glob.glob('/lib/systemd/system/*.service'):
-        with open(path) as f:
-            if any(line.strip() == 'DefaultDependencies=no' for line in f):
-                conn.execute('UPDATE units SET low_level = ? WHERE unit_path = ?', (True, path))
+    conn.executemany(
+        'UPDATE units SET low_level = ? WHERE unit_path = ?',
+        [(True, str(path))
+         for path in pathlib.Path('/lib/systemd/system/').glob('*.service')
+         if '\nDefaultDependencies=no' in path.read_text()])
 
     # Permanently masked things (e.g. hwclock.sh).
     # for path in glob.glob('/lib/systemd/system/*.service'):
@@ -127,35 +128,24 @@ with sqlite3.connect(':memory:') as conn:
     conn.executemany('INSERT INTO CVEs VALUES (?, ?)', obj.items())
     del obj
 
+    cache = apt.Cache()
     conn.execute('CREATE TABLE packages (package TEXT PRIMARY KEY, source_package TEXT NOT NULL)')
-    ## This is FAR too slow.
-    # conn.executemany(
-    #     'INSERT INTO packages (package, source_package) VALUES (?, ?)',
-    #     ((package, binary_package_to_source_package(package))
-    #       for package, in conn.execute('SELECT DISTINCT package FROM units')))
-    source_package = None       # SIGH
-    for path in glob.glob('/var/lib/apt/lists/*_Packages'):
-        with open(path) as f:
-            # UPDATE: I give up, I can't work out how to do this in debian.deb822 or apt.Cache.
-            # for package in debian.deb822.Packages(f):
-            #     print(package.dump())
-            #     exit()
-            for line in f:
-                if line.startswith('Package: '):
-                    _, package = line.strip().split()
-                elif line.startswith('Source: '):
-                    source_package = line.split()[1]
-                elif line == '\n':
-                    conn.execute('INSERT OR IGNORE INTO packages VALUES (?, ?)', (package, source_package or package))
-                    package = source_package = None
+    conn.executemany(
+        'INSERT INTO packages (package, source_package) VALUES (?, ?)',
+        set((package.name,      # binary package
+             version.record.get('Source', package.name).split()[0])  # source package
+         for package in cache
+         for version in package.versions))
 
     with open('debian-systemd-service-units-by-popcon-popularity.tsv', 'w') as f:
+        print('State', 'Popcon Rank', 'Binary package', 'Unit path', sep='\t', file=f)
         for row in conn.execute('SELECT CASE lockdown_complete WHEN 1 THEN "#" WHEN -1 THEN "%" ELSE "" END ||'
                                 '       CASE low_level         WHEN 1 THEN "!" ELSE "" END as commented_out_and_low_level,'
                                 '       rank, package, unit_path FROM units NATURAL LEFT JOIN popcon ORDER BY rank IS NULL, 2, 3, 4'):
             print(*row, sep='\t', file=f)
 
     with open('debian-systemd-service-units-by-cve-count.tsv', 'w') as f:
+        print('State', 'Binary package', 'Unit path', sep='\t', file=f)
         for row in conn.execute('SELECT CASE lockdown_complete WHEN 1 THEN "#" WHEN -1 THEN "%" ELSE "" END ||'
                                 '       CASE low_level         WHEN 1 THEN "!" ELSE "" END as commented_out_and_low_level,'
                                 ' rank, package, unit_path FROM units NATURAL JOIN packages NATURAL LEFT JOIN CVEs ORDER BY 2 DESC, 3, 4'):
