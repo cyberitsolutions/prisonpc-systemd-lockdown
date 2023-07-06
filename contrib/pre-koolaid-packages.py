@@ -8,7 +8,7 @@ import subprocess
 
 import apt
 
-__doc__ = """ list all packages that have an /etc/init.d/X but and corresponding /lib/systemd/system/X.service, ordered by descending popularity """
+__doc__ = """ list all packages that have an /etc/init.d/X but no corresponding /lib/systemd/system/X.service, ordered by descending popularity """
 
 
 # FIXME: this is bloody slow - I should use "import apt_pkg" or something.
