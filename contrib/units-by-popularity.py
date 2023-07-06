@@ -19,11 +19,6 @@ import pathlib
 import debian.deb822
 import apt
 
-def binary_package_to_source_package(s: str) -> str:
-    return subprocess.check_output('grep-aptavail -s Source --no-field-name --exact-match -P'.split() + [s],
-                                   universal_newlines=True
-    ).strip() or s
-
 
 # These two commands are slow, so they're persistent between runs.
 subprocess.check_call('wget -nv -nc https://popcon.debian.org/by_inst.gz'.split())
