@@ -1,4 +1,4 @@
-popularity,source_package,binary_package,script,already_done
+popularity,source_package,binary_package,script,already_done,REFERENCE
 34,util-linux,util-linux-extra,hwclock.sh,0
 130,busybox,busybox-syslogd,busybox-klogd,0
 130,busybox,busybox-syslogd,busybox-syslogd,0
@@ -7,11 +7,11 @@ popularity,source_package,binary_package,script,already_done
 147,console-setup,console-setup-freebsd,keyboard-setup.sh,0
 147,console-setup,console-setup-linux,console-setup.sh,0
 147,console-setup,console-setup-linux,keyboard-setup.sh,0
-253,sudo,sudo-ldap,sudo-ldap,0
-600,git,git-daemon-sysvinit,git-daemon,0
-1037,speech-dispatcher,speech-dispatcher,speech-dispatcher,0
-1594,screen,screen,screen-cleanup,0
-2694,exim4,exim4-base,exim4,0
+253,sudo,sudo-ldap,sudo-ldap,0,https://bugs.debian.org/1033728
+600,git,git-daemon-sysvinit,git-daemon,0,https://bugs.debian.org/950696
+1037,speech-dispatcher,speech-dispatcher,speech-dispatcher,1,https://bugs.debian.org/995037
+1594,screen,screen,screen-cleanup,1,https://bugs.launchpad.net/ubuntu/+source/screen/+bug/1462692
+2694,exim4,exim4-base,exim4,0,https://bugs.debian.org/844178
 3869,sysvinit,bootlogd,bootlogd,0
 3869,sysvinit,bootlogd,stop-bootlogd,0
 3869,sysvinit,bootlogd,stop-bootlogd-single,0
@@ -45,7 +45,7 @@ popularity,source_package,binary_package,script,already_done
 4552,clamav,clamav-milter,clamav-milter,0
 4813,cpufrequtils,cpufrequtils,cpufrequtils,0
 4813,cpufrequtils,cpufrequtils,loadcpufreq,0
-6055,monit,monit,monit,0
+6055,monit,monit,monit,0,https://bugs.debian.org/1039270
 6104,timidity,timidity-daemon,timidity,0
 6396,xinetd,xinetd,xinetd,0
 6608,openipmi,openipmi,openipmi,0
@@ -60,7 +60,7 @@ popularity,source_package,binary_package,script,already_done
 10134,xl2tpd,xl2tpd,xl2tpd,0
 10292,gkrellm,gkrellmd,gkrellmd,0
 10346,linuxlogo,linuxlogo,linuxlogo,0
-10385,mpd,mpd,mpd,0
+10385,mpd,mpd,mpd,0,https://bugs.debian.org/844178
 10498,mpt-status,mpt-status,mpt-statusd,0
 11129,tftp-hpa,tftpd-hpa,tftpd-hpa,0
 11188,kexec-tools,kexec-tools,kexec,0
