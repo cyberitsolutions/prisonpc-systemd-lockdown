@@ -86,6 +86,27 @@ Gotchas
   In testing, I found that savelog from ``binutils:i386`` worked fine, though, so
   maybe at least some *simple* programs can get away with this?
 
+  UPDATE: that was because savelog is a shell script, and /bin/sh was still amd64.
+
+  roehling observes:
+
+    If your threat model allows access to qemu-user-static for an attacker,
+    they can run pretty much any binary is if it were native, and
+    the whole SystemCallArchitectures hardening becomes meaningless.
+
+
+  mjg59 observes:
+
+    My understanding of the threat is that compatibility syscalls (eg, x32 on amd64) are
+    less well-tested than the local architecture syscalls, and
+    so allowing apps to call them increases the risk -
+    a compromised app that can make compatibility syscalls stands a higher probability of being able to elevate privileges,
+    either in userland or to the kernel itself.
+    Allowing qemu to translate syscalls from other architectures to the local syscall ABI doesn't increase that risk, so isn't a concern.
+    The goal isn't to prevent code form other architectures from running,
+    it's to reduce the attack surface by preventing calls to the compatbility syscalls.
+
+
 • Question: how do we make it as obvious as possible when a daemon crashes due to a ``deny foo`` rule?
   For example, when I tested nginx:i386 with SystemCallArchitectures=native, there was **NO** indication in journalctl or coredumpctl that it failed because it was i386.
   If I had just installed nginx:i386 and the Debian maintainer had put SystemCallArchitectures=native there, how the fuck would I have known that was the cause of the problem?
