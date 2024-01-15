@@ -157,19 +157,19 @@ What to harden (prioritization)
 ------------------------------------------------------------
 • Start with daemons that are widely installed?
 
-  https://github.com/cyberitsolutions/prisonpc-systemd-lockdown/blob/debian-systemd-service-units-by-popcon-popularity.tsv
+  https://github.com/cyberitsolutions/prisonpc-systemd-lockdown/blob/main/debian-systemd-service-units-by-popcon-popularity.tsv
 
-  https://github.com/cyberitsolutions/prisonpc-systemd-lockdown/blob/contrib/units-by-popularity.py
+  https://github.com/cyberitsolutions/prisonpc-systemd-lockdown/blob/main/contrib/units-by-popularity.py
 
 • Start with daemons with a track record of insecurity?
 
-  https://github.com/cyberitsolutions/prisonpc-systemd-lockdown/blob/debian-systemd-service-units-by-cve-count.tsv
+  https://github.com/cyberitsolutions/prisonpc-systemd-lockdown/blob/main/debian-systemd-service-units-by-cve-count.tsv
 
 • What units aren't even systemd-ized *at all* yet?
 
-  https://github.com/cyberitsolutions/prisonpc-systemd-lockdown/blob/contrib/pre-koolaid-packages.py
+  https://github.com/cyberitsolutions/prisonpc-systemd-lockdown/blob/main/contrib/pre-koolaid-packages.py
 
-  https://github.com/cyberitsolutions/prisonpc-systemd-lockdown/blob/contrib/pre-koolaid-packages.csv
+  https://github.com/cyberitsolutions/prisonpc-systemd-lockdown/blob/main/contrib/pre-koolaid-packages.csv
 
 • Start with daemons that have a well-defined "do one thing, well" mission?
 
